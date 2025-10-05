@@ -1,7 +1,18 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import fs from 'fs';
 
-const dbPath = path.join(process.cwd(), 'dashboard.db');
+// Use /app/data for Railway persistent volumes, fallback to current directory for local dev
+const dataDir = process.env.NODE_ENV === 'production'
+  ? '/app/data'
+  : process.cwd();
+
+// Ensure data directory exists (for Railway)
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const dbPath = path.join(dataDir, 'dashboard.db');
 const db = new Database(dbPath);
 
 // Initialize database schema

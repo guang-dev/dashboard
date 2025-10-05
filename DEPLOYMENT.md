@@ -165,23 +165,38 @@ Railway is a simple deployment platform with excellent Next.js support.
 4. **Configure deployment**:
    Railway will auto-detect Next.js configuration from `railway.json` and `nixpacks.toml`
 
-5. **Add environment variables** (if needed):
+5. **🔴 IMPORTANT: Add a persistent volume for SQLite data**:
+   - Click on your deployed service
+   - Go to "Settings" tab
+   - Scroll to "Volumes" section
+   - Click "New Volume"
+   - **Mount Path**: `/app/data`
+   - Click "Add"
+
+   This ensures your database persists across deployments!
+
+6. **Set environment variables**:
    - Click on your service
    - Go to "Variables" tab
-   - Add any required environment variables
+   - Add: `NODE_ENV=production`
 
-6. **Deploy**:
+7. **Deploy**:
    - Railway will automatically build and deploy
    - You'll get a URL like `https://your-app.up.railway.app`
 
 ### Important Notes for Railway:
-- ⚠️ **SQLite persistence**: Railway provides ephemeral storage by default
-- Consider using Railway's PostgreSQL plugin for persistent data:
-  1. Click "New" → "Database" → "Add PostgreSQL"
-  2. Update your app to use PostgreSQL (see Database Considerations below)
+- ✅ **SQLite with persistent volume**: This app is configured to use `/app/data` for database storage
+- The volume setup in step 5 is **REQUIRED** for data persistence
+- Without the volume, all data (users, returns) will be lost on each deployment
 - The `railway.json` and `nixpacks.toml` files are already configured
 - Automatic deployments trigger on every git push to main branch
 - Free tier available with limited hours/month
+
+### Alternative: PostgreSQL (More Scalable)
+If you prefer PostgreSQL instead:
+1. Click "New" → "Database" → "Add PostgreSQL"
+2. Update `lib/db.ts` to use PostgreSQL instead of SQLite
+3. Railway will provide a `DATABASE_URL` environment variable automatically
 
 ## Option 5: Netlify
 
