@@ -149,10 +149,39 @@ docker-compose up -d
 
 ## Option 4: Railway
 
-1. Go to [railway.app](https://railway.app)
-2. Click "New Project" → "Deploy from GitHub"
-3. Select your repository
-4. Railway will auto-detect Next.js and deploy
+Railway is a simple deployment platform with excellent Next.js support.
+
+### Steps:
+
+1. **Push your code to GitHub** (see instructions above for authentication)
+
+2. **Go to [railway.app](https://railway.app)** and sign in with GitHub
+
+3. **Create new project**:
+   - Click "New Project"
+   - Select "Deploy from GitHub repo"
+   - Choose your `dashboard` repository
+
+4. **Configure deployment**:
+   Railway will auto-detect Next.js configuration from `railway.json` and `nixpacks.toml`
+
+5. **Add environment variables** (if needed):
+   - Click on your service
+   - Go to "Variables" tab
+   - Add any required environment variables
+
+6. **Deploy**:
+   - Railway will automatically build and deploy
+   - You'll get a URL like `https://your-app.up.railway.app`
+
+### Important Notes for Railway:
+- ⚠️ **SQLite persistence**: Railway provides ephemeral storage by default
+- Consider using Railway's PostgreSQL plugin for persistent data:
+  1. Click "New" → "Database" → "Add PostgreSQL"
+  2. Update your app to use PostgreSQL (see Database Considerations below)
+- The `railway.json` and `nixpacks.toml` files are already configured
+- Automatic deployments trigger on every git push to main branch
+- Free tier available with limited hours/month
 
 ## Option 5: Netlify
 
