@@ -63,34 +63,38 @@ export default function DashboardPage() {
     const year = date.getFullYear();
     const month = date.getMonth() + 1;
 
-    // Load daily returns for this user
-    const returnsRes = await fetch(`/api/returns?userId=${user.id}&year=${year}&month=${month}&t=${Date.now()}`, {
-      cache: 'no-store'
-    });
+    // Load both returns and calendar in parallel
+    const [returnsRes, calendarRes] = await Promise.all([
+      fetch(`/api/returns?userId=${user.id}&year=${year}&month=${month}&t=${Date.now()}`, {
+        cache: 'no-store'
+      }),
+      fetch(`/api/calendar?year=${year}&month=${month}&t=${Date.now()}`, {
+        cache: 'no-store'
+      })
+    ]);
+
+    let returns: DailyReturn[] = [];
+    let days: TradingDay[] = [];
+
     if (returnsRes.ok) {
       const data = await returnsRes.json();
       console.log('User dashboard - Loaded returns:', data.returns);
-      setDailyReturns([...data.returns]);
-      calculateAccountSummary(user.beginning_value, data.returns);
+      returns = data.returns;
+      setDailyReturns([...returns]);
     }
 
-    // Load trading calendar
-    const calendarRes = await fetch(`/api/calendar?year=${year}&month=${month}&t=${Date.now()}`, {
-      cache: 'no-store'
-    });
     if (calendarRes.ok) {
       const data = await calendarRes.json();
       console.log('User dashboard - Loaded calendar:', data.days);
-      setTradingDays([...data.days]);
+      days = data.days;
+      setTradingDays([...days]);
     }
-  };
 
-  const calculateAccountSummary = (beginningValue: number, returns: DailyReturn[]) => {
-    // Only include returns that are on trading calendar days
-    const tradingDates = new Set(tradingDays.map(day => day.date));
+    // Calculate account summary after both are loaded
+    const tradingDates = new Set(days.map(day => day.date));
     const validReturns = returns.filter(ret => tradingDates.has(ret.date));
 
-    let currentValue = beginningValue;
+    let currentValue = user.beginning_value;
     let cumulativeReturn = 1;
 
     for (const dailyReturn of validReturns) {
@@ -99,8 +103,8 @@ export default function DashboardPage() {
       cumulativeReturn *= (1 + dailyReturn.percentage / 100);
     }
 
-    const change = currentValue - beginningValue;
-    const percentChange = beginningValue !== 0 ? (change / beginningValue) * 100 : 0;
+    const change = currentValue - user.beginning_value;
+    const percentChange = user.beginning_value !== 0 ? (change / user.beginning_value) * 100 : 0;
     const monthReturn = (cumulativeReturn - 1) * 100;
 
     setAccountSummary({
