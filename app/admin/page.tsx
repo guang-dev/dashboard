@@ -221,7 +221,16 @@ export default function AdminPage() {
 
     if (res.ok) {
       setNewReturn({ date: new Date().toISOString().split('T')[0], dollarChange: '' });
-      await loadDailyReturns(selectedUser.id);
+      const year = selectedDate.getFullYear();
+      const month = selectedDate.getMonth() + 1;
+      const returnsRes = await fetch(`/api/returns?userId=${selectedUser.id}&year=${year}&month=${month}&t=${Date.now()}`, {
+        cache: 'no-store'
+      });
+      if (returnsRes.ok) {
+        const data = await returnsRes.json();
+        setDailyReturns([...data.returns]);
+        calculateAccountSummary(data.returns);
+      }
       alert('Return added successfully!');
     } else {
       const data = await res.json();
