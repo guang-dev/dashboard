@@ -44,6 +44,8 @@ export default function AdminPage() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [editingUser, setEditingUser] = useState<number | null>(null);
   const [totalFundValue, setTotalFundValue] = useState(0);
+  const [editingFundValue, setEditingFundValue] = useState(false);
+  const [newFundValue, setNewFundValue] = useState('');
   const [userSummaries, setUserSummaries] = useState<UserSummary[]>([]);
   const [showMonthValuesModal, setShowMonthValuesModal] = useState(false);
   const [monthValuesData, setMonthValuesData] = useState<Record<number, { beginningValue: string; ownershipPercentage: string }>>({});
@@ -61,15 +63,13 @@ export default function AdminPage() {
     password: '',
     firstName: '',
     lastName: '',
-    beginningValue: '',
     ownershipPercentage: ''
   });
 
   // Daily return form
   const [newReturn, setNewReturn] = useState({
     date: new Date().toISOString().split('T')[0],
-    dollarChange: '',
-    totalFundValue: ''
+    dollarChange: ''
   });
 
   useEffect(() => {
@@ -88,6 +88,7 @@ export default function AdminPage() {
     setCurrentUser(user);
     loadUsers();
     loadTradingCalendar();
+    loadFundSettings();
   }, [router]);
 
   useEffect(() => {
@@ -95,15 +96,21 @@ export default function AdminPage() {
     loadTradingCalendar();
   }, [selectedDate]);
 
-  useEffect(() => {
-    calculateTotalFundValue();
-  }, [users]);
+  const loadFundSettings = async () => {
+    const res = await fetch('/api/fund-settings');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.settings) {
+        setTotalFundValue(data.settings.total_fund_value);
+      }
+    }
+  };
 
   useEffect(() => {
-    if (fundReturns.length > 0 && users.length > 0) {
+    if (users.length > 0 && tradingDays.length > 0) {
       calculateUserSummaries();
     }
-  }, [fundReturns, users]);
+  }, [fundReturns, users, tradingDays]);
 
   const loadUsers = async () => {
     const res = await fetch('/api/users');
@@ -137,17 +144,49 @@ export default function AdminPage() {
     }
   };
 
-  const calculateTotalFundValue = () => {
-    const total = users.reduce((sum, user) => sum + user.beginning_value, 0);
-    setTotalFundValue(total);
+  const handleUpdateFundValue = async () => {
+    const res = await fetch('/api/fund-settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        totalFundValue: parseFloat(newFundValue)
+      }),
+    });
+
+    if (res.ok) {
+      setTotalFundValue(parseFloat(newFundValue));
+      setEditingFundValue(false);
+      calculateUserSummaries();
+      alert('Fund value updated successfully!');
+    } else {
+      alert('Failed to update fund value');
+    }
   };
 
-  const calculateUserSummaries = () => {
+  const calculateUserSummaries = async () => {
+    if (totalFundValue === 0) return;
+
     const tradingDates = new Set(tradingDays.map(day => day.date));
     const validReturns = fundReturns.filter(ret => tradingDates.has(ret.date));
 
-    const summaries = users.map(user => {
-      let currentValue = user.beginning_value;
+    const year = selectedDate.getFullYear();
+    const month = selectedDate.getMonth() + 1;
+
+    // Load monthly beginning values for current month
+    const monthlyValuesPromises = users.map(user =>
+      fetch(`/api/month-values?userId=${user.id}&year=${year}&month=${month}`).then(r => r.json())
+    );
+    const monthlyValuesResults = await Promise.all(monthlyValuesPromises);
+
+    const summaries = users.map((user, idx) => {
+      const monthlyValue = monthlyValuesResults[idx]?.value;
+
+      // Use monthly beginning value if available, otherwise calculate from total fund
+      const userBeginningValue = monthlyValue
+        ? monthlyValue.beginning_value
+        : totalFundValue * (user.ownership_percentage / 100);
+
+      let currentValue = userBeginningValue;
 
       for (const fundReturn of validReturns) {
         // Calculate user's share of the fund's dollar change based on ownership %
@@ -155,8 +194,8 @@ export default function AdminPage() {
         currentValue += userShare;
       }
 
-      const change = currentValue - user.beginning_value;
-      const percentChange = user.beginning_value !== 0 ? (change / user.beginning_value) * 100 : 0;
+      const change = currentValue - userBeginningValue;
+      const percentChange = userBeginningValue !== 0 ? (change / userBeginningValue) * 100 : 0;
 
       return {
         user,
@@ -179,6 +218,20 @@ export default function AdminPage() {
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Check if adding this user would exceed 100% ownership
+    const currentTotalOwnership = users.reduce((sum, u) => sum + u.ownership_percentage, 0);
+    const newOwnership = parseFloat(newUser.ownershipPercentage);
+    const totalAfterAdd = currentTotalOwnership + newOwnership;
+
+    if (totalAfterAdd > 100) {
+      alert(`Cannot add user: Total ownership would be ${totalAfterAdd.toFixed(1)}% (exceeds 100%). Current allocation: ${currentTotalOwnership.toFixed(1)}%, Available: ${(100 - currentTotalOwnership).toFixed(1)}%`);
+      return;
+    }
+
+    // Calculate beginning value based on ownership and total fund
+    const beginningValue = totalFundValue * (newOwnership / 100);
+
     const res = await fetch('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -187,13 +240,13 @@ export default function AdminPage() {
         password: newUser.password,
         firstName: newUser.firstName,
         lastName: newUser.lastName,
-        beginningValue: parseFloat(newUser.beginningValue),
-        ownershipPercentage: parseFloat(newUser.ownershipPercentage)
+        beginningValue: beginningValue,
+        ownershipPercentage: newOwnership
       }),
     });
 
     if (res.ok) {
-      setNewUser({ username: '', password: '', firstName: '', lastName: '', beginningValue: '', ownershipPercentage: '' });
+      setNewUser({ username: '', password: '', firstName: '', lastName: '', ownershipPercentage: '' });
       setShowUserForm(false);
       loadUsers();
       alert('User created successfully!');
@@ -204,6 +257,24 @@ export default function AdminPage() {
   };
 
   const handleUpdateUser = async (id: number) => {
+    const newOwnership = parseFloat(editUserData.ownershipPercentage);
+
+    // Check if updating this user would exceed 100% ownership
+    // Calculate total excluding the user being edited
+    const currentUser = users.find(u => u.id === id);
+    const otherUsersOwnership = users
+      .filter(u => u.id !== id)
+      .reduce((sum, u) => sum + u.ownership_percentage, 0);
+    const totalAfterUpdate = otherUsersOwnership + newOwnership;
+
+    if (totalAfterUpdate > 100) {
+      alert(`Cannot update user: Total ownership would be ${totalAfterUpdate.toFixed(1)}% (exceeds 100%). Other users: ${otherUsersOwnership.toFixed(1)}%, Available: ${(100 - otherUsersOwnership).toFixed(1)}%`);
+      return;
+    }
+
+    // Calculate beginning value based on ownership and total fund
+    const beginningValue = totalFundValue * (newOwnership / 100);
+
     const res = await fetch('/api/users', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -211,8 +282,8 @@ export default function AdminPage() {
         id,
         firstName: editUserData.firstName,
         lastName: editUserData.lastName,
-        beginningValue: parseFloat(editUserData.beginningValue),
-        ownershipPercentage: parseFloat(editUserData.ownershipPercentage)
+        beginningValue: beginningValue,
+        ownershipPercentage: newOwnership
       }),
     });
 
@@ -243,7 +314,6 @@ export default function AdminPage() {
     e.preventDefault();
 
     const dollarChange = parseFloat(newReturn.dollarChange);
-    const fundValue = parseFloat(newReturn.totalFundValue);
 
     const res = await fetch('/api/fund-returns', {
       method: 'POST',
@@ -251,15 +321,14 @@ export default function AdminPage() {
       body: JSON.stringify({
         date: newReturn.date,
         dollarChange: dollarChange,
-        totalFundValue: fundValue
+        totalFundValue: totalFundValue  // Use the current total fund value
       }),
     });
 
     if (res.ok) {
       setNewReturn({
         date: new Date().toISOString().split('T')[0],
-        dollarChange: '',
-        totalFundValue: ''
+        dollarChange: ''
       });
       await loadFundReturns();
       alert('Return added successfully!');
@@ -325,9 +394,24 @@ export default function AdminPage() {
 
   const handleSaveMonthValues = async () => {
     try {
+      // Calculate total fund value from all user beginning values
+      const totalNextMonthFund = users.reduce((sum, user) => {
+        const values = monthValuesData[user.id];
+        return sum + (values ? parseFloat(values.beginningValue) : 0);
+      }, 0);
+
+      if (totalNextMonthFund === 0) {
+        alert('Cannot save: Total fund value is $0. Please enter beginning values.');
+        return;
+      }
+
+      // Calculate ownership percentages from beginning values
       for (const user of users) {
         const values = monthValuesData[user.id];
         if (values) {
+          const beginningValue = parseFloat(values.beginningValue);
+          const ownershipPercentage = (beginningValue / totalNextMonthFund) * 100;
+
           await fetch('/api/month-values', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -335,14 +419,25 @@ export default function AdminPage() {
               userId: user.id,
               year: selectedMonthYear.year,
               month: selectedMonthYear.month,
-              beginningValue: parseFloat(values.beginningValue),
-              ownershipPercentage: parseFloat(values.ownershipPercentage)
+              beginningValue: beginningValue,
+              ownershipPercentage: ownershipPercentage
             }),
           });
         }
       }
-      alert('Month values saved successfully!');
+
+      // Update the global fund value for next month
+      await fetch('/api/fund-settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          totalFundValue: totalNextMonthFund
+        }),
+      });
+
+      alert(`Month values saved successfully! Total fund updated to $${totalNextMonthFund.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
       setShowMonthValuesModal(false);
+      loadFundSettings(); // Reload to show updated fund value
     } catch (error) {
       alert('Failed to save month values');
     }
@@ -437,52 +532,108 @@ export default function AdminPage() {
         {showMonthValuesModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg shadow-xl p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-              <h2 className="text-2xl font-semibold mb-4 text-gray-800">
-                Set Beginning Values for {new Date(selectedMonthYear.year, selectedMonthYear.month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' })}
-              </h2>
-              <p className="text-sm text-gray-600 mb-4">
-                Set the beginning values and ownership percentages for the next month. Current values are pre-filled.
+              <h2 className="text-2xl font-semibold mb-4 text-gray-800">Set Monthly Beginning Values</h2>
+
+              {/* Month/Year Selector */}
+              <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+                <label className="block text-sm text-gray-700 font-semibold mb-2">Select Month & Year</label>
+                <div className="flex gap-4">
+                  <select
+                    value={selectedMonthYear.month}
+                    onChange={(e) => setSelectedMonthYear({ ...selectedMonthYear, month: parseInt(e.target.value) })}
+                    className="px-3 py-2 border rounded-md"
+                  >
+                    <option value={1}>January</option>
+                    <option value={2}>February</option>
+                    <option value={3}>March</option>
+                    <option value={4}>April</option>
+                    <option value={5}>May</option>
+                    <option value={6}>June</option>
+                    <option value={7}>July</option>
+                    <option value={8}>August</option>
+                    <option value={9}>September</option>
+                    <option value={10}>October</option>
+                    <option value={11}>November</option>
+                    <option value={12}>December</option>
+                  </select>
+                  <select
+                    value={selectedMonthYear.year}
+                    onChange={(e) => setSelectedMonthYear({ ...selectedMonthYear, year: parseInt(e.target.value) })}
+                    className="px-3 py-2 border rounded-md"
+                  >
+                    {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 1 + i).map(year => (
+                      <option key={year} value={year}>{year}</option>
+                    ))}
+                  </select>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Setting values for: <strong>{new Date(selectedMonthYear.year, selectedMonthYear.month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' })}</strong>
+                </p>
+              </div>
+
+              <p className="text-sm text-gray-600 mb-2">
+                Set the beginning values for the selected month. Current ending values are pre-filled.
               </p>
+              <p className="text-sm text-blue-600 mb-4">
+                Ownership percentages and total fund value will be calculated automatically.
+              </p>
+
+              {/* Show calculated total */}
+              <div className="bg-blue-50 rounded-lg p-4 mb-4">
+                <div className="flex justify-between items-center">
+                  <span className="font-semibold text-gray-700">Total Fund (Next Month):</span>
+                  <span className="text-xl font-bold text-blue-600">
+                    ${users.reduce((sum, user) => {
+                      const values = monthValuesData[user.id];
+                      return sum + (values ? parseFloat(values.beginningValue) || 0 : 0);
+                    }, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
               <div className="space-y-4">
-                {users.map(user => (
-                  <div key={user.id} className="border rounded-lg p-4">
-                    <h3 className="font-semibold text-lg mb-2">{user.first_name} {user.last_name}</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm text-gray-600 mb-1">Beginning Value</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={monthValuesData[user.id]?.beginningValue || ''}
-                          onChange={(e) => setMonthValuesData({
-                            ...monthValuesData,
-                            [user.id]: {
-                              ...monthValuesData[user.id],
-                              beginningValue: e.target.value
-                            }
-                          })}
-                          className="w-full px-3 py-2 border rounded-md"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm text-gray-600 mb-1">Ownership %</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={monthValuesData[user.id]?.ownershipPercentage || ''}
-                          onChange={(e) => setMonthValuesData({
-                            ...monthValuesData,
-                            [user.id]: {
-                              ...monthValuesData[user.id],
-                              ownershipPercentage: e.target.value
-                            }
-                          })}
-                          className="w-full px-3 py-2 border rounded-md"
-                        />
+                {users.map(user => {
+                  const totalFund = users.reduce((sum, u) => {
+                    const values = monthValuesData[u.id];
+                    return sum + (values ? parseFloat(values.beginningValue) || 0 : 0);
+                  }, 0);
+                  const userValue = parseFloat(monthValuesData[user.id]?.beginningValue) || 0;
+                  const calculatedOwnership = totalFund > 0 ? (userValue / totalFund) * 100 : 0;
+
+                  return (
+                    <div key={user.id} className="border rounded-lg p-4">
+                      <h3 className="font-semibold text-lg mb-2">{user.first_name} {user.last_name}</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm text-gray-600 mb-1">Beginning Value</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={monthValuesData[user.id]?.beginningValue || ''}
+                            onChange={(e) => setMonthValuesData({
+                              ...monthValuesData,
+                              [user.id]: {
+                                ...monthValuesData[user.id],
+                                beginningValue: e.target.value,
+                                ownershipPercentage: '' // Not used anymore
+                              }
+                            })}
+                            className="w-full px-3 py-2 border rounded-md"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-gray-600 mb-1">Ownership % (calculated)</label>
+                          <input
+                            type="text"
+                            value={`${calculatedOwnership.toFixed(2)}%`}
+                            className="w-full px-3 py-2 border rounded-md bg-gray-100"
+                            disabled
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="flex gap-4 mt-6">
                 <button
@@ -506,7 +657,7 @@ export default function AdminPage() {
         {showUserForm && (
           <div className="bg-white rounded-lg shadow-md p-6 mb-8">
             <h2 className="text-xl font-semibold mb-4 text-gray-800">Create New User</h2>
-            <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
               <input
                 type="text"
                 placeholder="Username"
@@ -542,15 +693,6 @@ export default function AdminPage() {
               <input
                 type="number"
                 step="0.01"
-                placeholder="Beginning Value"
-                value={newUser.beginningValue}
-                onChange={(e) => setNewUser({ ...newUser, beginningValue: e.target.value })}
-                className="px-3 py-2 border rounded-md"
-                required
-              />
-              <input
-                type="number"
-                step="0.01"
                 placeholder="Ownership % (e.g., 10 for 10%)"
                 value={newUser.ownershipPercentage}
                 onChange={(e) => setNewUser({ ...newUser, ownershipPercentage: e.target.value })}
@@ -559,7 +701,7 @@ export default function AdminPage() {
               />
               <button
                 type="submit"
-                className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 md:col-span-3"
+                className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 md:col-span-2 lg:col-span-5"
               >
                 Create User
               </button>
@@ -572,20 +714,74 @@ export default function AdminPage() {
           <h2 className="text-2xl font-semibold mb-4 text-gray-800">Fund Overview</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="p-4 bg-blue-50 rounded-lg">
-              <p className="text-sm text-gray-600">Total Fund Value (Beginning)</p>
-              <p className="text-2xl font-bold text-blue-600">
-                ${totalFundValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </p>
+              <p className="text-sm text-gray-600 mb-2">Total Fund Value (Beginning)</p>
+              {editingFundValue ? (
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={newFundValue}
+                    onChange={(e) => setNewFundValue(e.target.value)}
+                    className="px-3 py-1 border rounded-md w-full"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleUpdateFundValue}
+                    className="text-green-600 hover:text-green-800 text-sm whitespace-nowrap"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setEditingFundValue(false)}
+                    className="text-gray-600 hover:text-gray-800 text-sm"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="flex justify-between items-center">
+                  <p className="text-2xl font-bold text-blue-600">
+                    ${totalFundValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </p>
+                  <button
+                    onClick={() => {
+                      setEditingFundValue(true);
+                      setNewFundValue(totalFundValue.toString());
+                    }}
+                    className="text-blue-600 hover:text-blue-800 text-sm"
+                  >
+                    Edit
+                  </button>
+                </div>
+              )}
             </div>
             <div className="p-4 bg-green-50 rounded-lg">
               <p className="text-sm text-gray-600">Total Users</p>
               <p className="text-2xl font-bold text-green-600">{users.length}</p>
             </div>
-            <div className="p-4 bg-purple-50 rounded-lg">
+            <div className={`p-4 rounded-lg ${
+              users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 100
+                ? 'bg-red-50'
+                : users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 95
+                ? 'bg-yellow-50'
+                : 'bg-purple-50'
+            }`}>
               <p className="text-sm text-gray-600">Ownership Allocated</p>
-              <p className="text-2xl font-bold text-purple-600">
+              <p className={`text-2xl font-bold ${
+                users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 100
+                  ? 'text-red-600'
+                  : users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 95
+                  ? 'text-yellow-600'
+                  : 'text-purple-600'
+              }`}>
                 {users.reduce((sum, u) => sum + u.ownership_percentage, 0).toFixed(1)}%
               </p>
+              {users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 100 && (
+                <p className="text-xs text-red-600 mt-1">⚠️ Exceeds 100%!</p>
+              )}
+              {users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 95 && users.reduce((sum, u) => sum + u.ownership_percentage, 0) <= 100 && (
+                <p className="text-xs text-yellow-600 mt-1">⚠️ Near limit</p>
+              )}
             </div>
           </div>
         </div>
@@ -622,14 +818,6 @@ export default function AdminPage() {
                       <input
                         type="number"
                         step="0.01"
-                        value={editUserData.beginningValue}
-                        onChange={(e) => setEditUserData({ ...editUserData, beginningValue: e.target.value })}
-                        className="w-full px-2 py-1 border rounded text-sm"
-                        placeholder="Beginning Value"
-                      />
-                      <input
-                        type="number"
-                        step="0.01"
                         value={editUserData.ownershipPercentage}
                         onChange={(e) => setEditUserData({ ...editUserData, ownershipPercentage: e.target.value })}
                         className="w-full px-2 py-1 border rounded text-sm"
@@ -657,7 +845,7 @@ export default function AdminPage() {
                         <p className="text-sm text-gray-600">@{user.username}</p>
                         <div className="mt-2 space-y-1">
                           <p className="text-sm text-gray-800">
-                            Beginning: ${user.beginning_value.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            Beginning: ${(totalFundValue * (user.ownership_percentage / 100)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                           </p>
                           <p className="text-sm text-gray-800">
                             Ownership: {user.ownership_percentage}%
@@ -682,7 +870,7 @@ export default function AdminPage() {
                             setEditUserData({
                               firstName: user.first_name,
                               lastName: user.last_name,
-                              beginningValue: user.beginning_value.toString(),
+                              beginningValue: '',
                               ownershipPercentage: user.ownership_percentage.toString()
                             });
                           }}
@@ -708,32 +896,38 @@ export default function AdminPage() {
         {/* Add New Fund Return Form */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">
           <h2 className="text-xl font-semibold mb-4 text-gray-800">Add Fund Return</h2>
-          <form onSubmit={handleAddReturn} className="flex gap-4">
-            <input
-              type="date"
-              value={newReturn.date}
-              onChange={(e) => setNewReturn({ ...newReturn, date: e.target.value })}
-              className="px-3 py-2 border rounded-md"
-              required
-            />
-            <input
-              type="number"
-              step="0.01"
-              placeholder="Dollar change (e.g., 1500 or -500)"
-              value={newReturn.dollarChange}
-              onChange={(e) => setNewReturn({ ...newReturn, dollarChange: e.target.value })}
-              className="px-3 py-2 border rounded-md flex-1"
-              required
-            />
-            <input
-              type="number"
-              step="0.01"
-              placeholder="Total fund value before change"
-              value={newReturn.totalFundValue}
-              onChange={(e) => setNewReturn({ ...newReturn, totalFundValue: e.target.value })}
-              className="px-3 py-2 border rounded-md flex-1"
-              required
-            />
+          <form onSubmit={handleAddReturn} className="flex gap-4 items-end">
+            <div className="flex-1">
+              <label className="block text-sm text-gray-600 mb-1">Date</label>
+              <input
+                type="date"
+                value={newReturn.date}
+                onChange={(e) => setNewReturn({ ...newReturn, date: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md"
+                required
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-sm text-gray-600 mb-1">Dollar Change</label>
+              <input
+                type="number"
+                step="0.01"
+                placeholder="e.g., 1500 or -500"
+                value={newReturn.dollarChange}
+                onChange={(e) => setNewReturn({ ...newReturn, dollarChange: e.target.value })}
+                className="w-full px-3 py-2 border rounded-md"
+                required
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-sm text-gray-600 mb-1">Fund Value (auto)</label>
+              <input
+                type="text"
+                value={`$${totalFundValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
+                className="w-full px-3 py-2 border rounded-md bg-gray-100"
+                disabled
+              />
+            </div>
             <button
               type="submit"
               className="bg-green-600 text-white px-6 py-2 rounded-md hover:bg-green-700"

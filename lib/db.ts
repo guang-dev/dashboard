@@ -64,7 +64,23 @@ db.exec(`
     UNIQUE(user_id, year, month),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS fund_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    total_fund_value REAL NOT NULL,
+    current_month_year TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
+
+// Initialize fund settings if not exists
+const fundSettings = db.prepare('SELECT id FROM fund_settings WHERE id = 1').get();
+if (!fundSettings) {
+  db.prepare(`
+    INSERT INTO fund_settings (id, total_fund_value, current_month_year)
+    VALUES (1, 100000, '2025-10')
+  `).run();
+}
 
 // Add ownership_percentage column if it doesn't exist (for existing databases)
 try {
