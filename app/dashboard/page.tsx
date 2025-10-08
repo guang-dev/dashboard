@@ -9,13 +9,15 @@ interface User {
   first_name: string;
   last_name: string;
   beginning_value: number;
+  ownership_percentage: number;
   is_admin: number;
 }
 
-interface DailyReturn {
+interface FundReturn {
   id: number;
   date: string;
-  percentage: number;
+  dollar_change: number;
+  total_fund_value: number;
 }
 
 interface TradingDay {
@@ -26,7 +28,7 @@ interface TradingDay {
 export default function DashboardPage() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [dailyReturns, setDailyReturns] = useState<DailyReturn[]>([]);
+  const [fundReturns, setFundReturns] = useState<FundReturn[]>([]);
   const [tradingDays, setTradingDays] = useState<TradingDay[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [accountSummary, setAccountSummary] = useState({
@@ -35,6 +37,7 @@ export default function DashboardPage() {
     percentChange: 0,
     monthReturn: 0
   });
+  const [previousMonthReturn, setPreviousMonthReturn] = useState<number | null>(null);
 
   useEffect(() => {
     const userStr = sessionStorage.getItem('user');
@@ -56,6 +59,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (currentUser) {
       loadDashboardData(currentUser, selectedDate);
+      loadPreviousMonthReturn(currentUser, selectedDate);
     }
   }, [selectedDate]);
 
@@ -63,9 +67,9 @@ export default function DashboardPage() {
     const year = date.getFullYear();
     const month = date.getMonth() + 1;
 
-    // Load both returns and calendar in parallel
+    // Load fund returns and calendar in parallel
     const [returnsRes, calendarRes] = await Promise.all([
-      fetch(`/api/returns?userId=${user.id}&year=${year}&month=${month}&t=${Date.now()}`, {
+      fetch(`/api/fund-returns?year=${year}&month=${month}&t=${Date.now()}`, {
         cache: 'no-store'
       }),
       fetch(`/api/calendar?year=${year}&month=${month}&t=${Date.now()}`, {
@@ -73,19 +77,17 @@ export default function DashboardPage() {
       })
     ]);
 
-    let returns: DailyReturn[] = [];
+    let returns: FundReturn[] = [];
     let days: TradingDay[] = [];
 
     if (returnsRes.ok) {
       const data = await returnsRes.json();
-      console.log('User dashboard - Loaded returns:', data.returns);
       returns = data.returns;
-      setDailyReturns([...returns]);
+      setFundReturns([...returns]);
     }
 
     if (calendarRes.ok) {
       const data = await calendarRes.json();
-      console.log('User dashboard - Loaded calendar:', data.days);
       days = data.days;
       setTradingDays([...days]);
     }
@@ -95,24 +97,64 @@ export default function DashboardPage() {
     const validReturns = returns.filter(ret => tradingDates.has(ret.date));
 
     let currentValue = user.beginning_value;
-    let cumulativeReturn = 1;
 
-    for (const dailyReturn of validReturns) {
-      const dailyChange = currentValue * (dailyReturn.percentage / 100);
-      currentValue += dailyChange;
-      cumulativeReturn *= (1 + dailyReturn.percentage / 100);
+    for (const fundReturn of validReturns) {
+      // Calculate user's share of the fund's dollar change based on ownership %
+      const userShare = fundReturn.dollar_change * (user.ownership_percentage / 100);
+      currentValue += userShare;
     }
 
     const change = currentValue - user.beginning_value;
     const percentChange = user.beginning_value !== 0 ? (change / user.beginning_value) * 100 : 0;
-    const monthReturn = (cumulativeReturn - 1) * 100;
 
     setAccountSummary({
       currentValue,
       change,
       percentChange,
-      monthReturn
+      monthReturn: percentChange
     });
+  };
+
+  const loadPreviousMonthReturn = async (user: User, date: Date) => {
+    // Get previous month
+    const prevMonth = date.getMonth(); // Current month is already +1, so this gives us previous
+    const prevYear = prevMonth === 0 ? date.getFullYear() - 1 : date.getFullYear();
+    const adjustedPrevMonth = prevMonth === 0 ? 12 : prevMonth;
+
+    try {
+      const [returnsRes, calendarRes] = await Promise.all([
+        fetch(`/api/fund-returns?year=${prevYear}&month=${adjustedPrevMonth}&t=${Date.now()}`, {
+          cache: 'no-store'
+        }),
+        fetch(`/api/calendar?year=${prevYear}&month=${adjustedPrevMonth}&t=${Date.now()}`, {
+          cache: 'no-store'
+        })
+      ]);
+
+      if (returnsRes.ok && calendarRes.ok) {
+        const returnsData = await returnsRes.json();
+        const calendarData = await calendarRes.json();
+
+        const tradingDates = new Set(calendarData.days.map((day: TradingDay) => day.date));
+        const validReturns = returnsData.returns.filter((ret: FundReturn) => tradingDates.has(ret.date));
+
+        let currentValue = user.beginning_value;
+
+        for (const fundReturn of validReturns) {
+          const userShare = fundReturn.dollar_change * (user.ownership_percentage / 100);
+          currentValue += userShare;
+        }
+
+        const change = currentValue - user.beginning_value;
+        const percentChange = user.beginning_value !== 0 ? (change / user.beginning_value) * 100 : 0;
+
+        setPreviousMonthReturn(percentChange);
+      } else {
+        setPreviousMonthReturn(null);
+      }
+    } catch (error) {
+      setPreviousMonthReturn(null);
+    }
   };
 
   const handlePreviousMonth = () => {
@@ -136,27 +178,41 @@ export default function DashboardPage() {
   const year = selectedDate.getFullYear();
 
   // Create a map of returns by date
-  const returnsByDate = dailyReturns.reduce((acc, ret) => {
+  const returnsByDate = fundReturns.reduce((acc, ret) => {
     acc[ret.date] = ret;
     return acc;
-  }, {} as Record<string, DailyReturn>);
+  }, {} as Record<string, FundReturn>);
 
   // Merge trading days with returns
   const dailyData = tradingDays.map(day => ({
     date: day.date,
     isHalfDay: day.is_half_day === 1,
-    percentage: returnsByDate[day.date]?.percentage || null
+    fundReturn: returnsByDate[day.date] || null
   }));
 
-  // Calculate cumulative return for each day
+  // Calculate cumulative return for each day and user's share
   let cumulativeReturn = 0;
+  let runningValue = currentUser.beginning_value;
   const dailyDataWithCumulative = dailyData.map(day => {
-    if (day.percentage !== null) {
-      cumulativeReturn = ((1 + cumulativeReturn / 100) * (1 + day.percentage / 100) - 1) * 100;
+    if (day.fundReturn) {
+      const userShare = day.fundReturn.dollar_change * (currentUser.ownership_percentage / 100);
+      runningValue += userShare;
+      const dayReturn = currentUser.beginning_value !== 0 ? (userShare / currentUser.beginning_value) * 100 : 0;
+      cumulativeReturn = ((runningValue - currentUser.beginning_value) / currentUser.beginning_value) * 100;
+
+      return {
+        ...day,
+        userDollarChange: userShare,
+        userDailyReturn: dayReturn,
+        cumulativeReturn: cumulativeReturn
+      };
     }
+
     return {
       ...day,
-      cumulativeReturn: day.percentage !== null ? cumulativeReturn : null
+      userDollarChange: null,
+      userDailyReturn: null,
+      cumulativeReturn: null
     };
   });
 
@@ -181,6 +237,20 @@ export default function DashboardPage() {
               <span className="text-gray-600">Account Name:</span>
               <span className="font-semibold text-gray-800">
                 {currentUser.first_name} {currentUser.last_name}
+              </span>
+            </div>
+            {previousMonthReturn !== null && (
+              <div className="flex justify-between items-center bg-blue-50 -mx-6 px-6 py-2">
+                <span className="text-gray-600">Previous Month Return:</span>
+                <span className={`font-semibold ${previousMonthReturn >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {previousMonthReturn >= 0 ? '+' : ''}{previousMonthReturn.toFixed(1)}%
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between items-center">
+              <span className="text-gray-600">Ownership:</span>
+              <span className="font-semibold text-gray-800">
+                {currentUser.ownership_percentage}%
               </span>
             </div>
             <div className="flex justify-between items-center">
@@ -239,6 +309,7 @@ export default function DashboardPage() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-2 text-left">Date</th>
+                  <th className="px-4 py-2 text-right">Dollar Change</th>
                   <th className="px-4 py-2 text-right">Daily Return</th>
                   <th className="px-4 py-2 text-right">Month's Current Return</th>
                 </tr>
@@ -264,11 +335,21 @@ export default function DashboardPage() {
                           </div>
                         </td>
                         <td className={`px-4 py-2 text-right font-medium ${
-                          day.percentage === null ? 'text-gray-400' :
-                          day.percentage >= 0 ? 'text-green-600' : 'text-red-600'
+                          day.userDollarChange === null ? 'text-gray-400' :
+                          day.userDollarChange >= 0 ? 'text-green-600' : 'text-red-600'
                         }`}>
-                          {day.percentage !== null ? (
-                            <>{day.percentage >= 0 ? '+' : ''}{day.percentage.toFixed(1)}%</>
+                          {day.userDollarChange !== null ? (
+                            <>{day.userDollarChange >= 0 ? '+' : ''}${day.userDollarChange.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td className={`px-4 py-2 text-right font-medium ${
+                          day.userDailyReturn === null ? 'text-gray-400' :
+                          day.userDailyReturn >= 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {day.userDailyReturn !== null ? (
+                            <>{day.userDailyReturn >= 0 ? '+' : ''}{day.userDailyReturn.toFixed(1)}%</>
                           ) : (
                             '-'
                           )}
@@ -288,7 +369,7 @@ export default function DashboardPage() {
                   })
                 ) : (
                   <tr>
-                    <td colSpan={3} className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
                       No trading days available for this month
                     </td>
                   </tr>

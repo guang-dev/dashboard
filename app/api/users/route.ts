@@ -15,7 +15,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { username, password, firstName, lastName, beginningValue } = await request.json();
+    const { username, password, firstName, lastName, beginningValue, ownershipPercentage } = await request.json();
 
     if (!username || !password || !firstName || !lastName || beginningValue === undefined) {
       return NextResponse.json(
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const success = createUser(username, password, firstName, lastName, beginningValue);
+    const success = createUser(username, password, firstName, lastName, beginningValue, ownershipPercentage || 0);
 
     if (!success) {
       return NextResponse.json(
@@ -37,6 +37,36 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { error: 'Failed to create user' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const { id, firstName, lastName, beginningValue, ownershipPercentage } = await request.json();
+
+    if (!id || !firstName || !lastName || beginningValue === undefined || ownershipPercentage === undefined) {
+      return NextResponse.json(
+        { error: 'All fields are required' },
+        { status: 400 }
+      );
+    }
+
+    const { updateUser } = await import('@/lib/auth');
+    const success = updateUser(id, firstName, lastName, beginningValue, ownershipPercentage);
+
+    if (!success) {
+      return NextResponse.json(
+        { error: 'Failed to update user' },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Failed to update user' },
       { status: 500 }
     );
   }

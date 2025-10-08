@@ -24,6 +24,7 @@ db.exec(`
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     beginning_value REAL NOT NULL,
+    ownership_percentage REAL DEFAULT 0,
     is_admin INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
@@ -38,12 +39,39 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS fund_returns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT UNIQUE NOT NULL,
+    dollar_change REAL NOT NULL,
+    total_fund_value REAL NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS trading_calendar (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT UNIQUE NOT NULL,
     is_half_day INTEGER DEFAULT 0
   );
+
+  CREATE TABLE IF NOT EXISTS month_beginning_values (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    year INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    beginning_value REAL NOT NULL,
+    ownership_percentage REAL NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, year, month),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
 `);
+
+// Add ownership_percentage column if it doesn't exist (for existing databases)
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN ownership_percentage REAL DEFAULT 0`);
+} catch (e) {
+  // Column already exists, ignore error
+}
 
 // Create admin user if doesn't exist
 const adminExists = db.prepare('SELECT id FROM users WHERE is_admin = 1').get();

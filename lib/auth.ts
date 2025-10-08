@@ -6,12 +6,13 @@ export interface User {
   first_name: string;
   last_name: string;
   beginning_value: number;
+  ownership_percentage: number;
   is_admin: number;
 }
 
 export function authenticateUser(username: string, password: string): User | null {
   const user = db.prepare(`
-    SELECT id, username, first_name, last_name, beginning_value, is_admin
+    SELECT id, username, first_name, last_name, beginning_value, ownership_percentage, is_admin
     FROM users
     WHERE username = ? AND password = ?
   `).get(username, password) as User | undefined;
@@ -24,13 +25,14 @@ export function createUser(
   password: string,
   firstName: string,
   lastName: string,
-  beginningValue: number
+  beginningValue: number,
+  ownershipPercentage: number = 0
 ): boolean {
   try {
     db.prepare(`
-      INSERT INTO users (username, password, first_name, last_name, beginning_value, is_admin)
-      VALUES (?, ?, ?, ?, ?, 0)
-    `).run(username, password, firstName, lastName, beginningValue);
+      INSERT INTO users (username, password, first_name, last_name, beginning_value, ownership_percentage, is_admin)
+      VALUES (?, ?, ?, ?, ?, ?, 0)
+    `).run(username, password, firstName, lastName, beginningValue, ownershipPercentage);
     return true;
   } catch (error) {
     return false;
@@ -39,7 +41,7 @@ export function createUser(
 
 export function getAllUsers(): User[] {
   return db.prepare(`
-    SELECT id, username, first_name, last_name, beginning_value, is_admin
+    SELECT id, username, first_name, last_name, beginning_value, ownership_percentage, is_admin
     FROM users
     WHERE is_admin = 0
     ORDER BY id
@@ -50,14 +52,15 @@ export function updateUser(
   id: number,
   firstName: string,
   lastName: string,
-  beginningValue: number
+  beginningValue: number,
+  ownershipPercentage: number
 ): boolean {
   try {
     db.prepare(`
       UPDATE users
-      SET first_name = ?, last_name = ?, beginning_value = ?
+      SET first_name = ?, last_name = ?, beginning_value = ?, ownership_percentage = ?
       WHERE id = ?
-    `).run(firstName, lastName, beginningValue, id);
+    `).run(firstName, lastName, beginningValue, ownershipPercentage, id);
     return true;
   } catch (error) {
     return false;
