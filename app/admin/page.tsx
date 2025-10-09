@@ -449,18 +449,8 @@ export default function AdminPage() {
         }
       }
 
-      // Update the global fund value for next month
-      await fetch('/api/fund-settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          totalFundValue: totalNextMonthFund
-        }),
-      });
-
-      alert(`Month values saved successfully! Total fund updated to $${totalNextMonthFund.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+      alert(`Month values saved successfully for ${new Date(selectedMonthYear.year, selectedMonthYear.month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' })}!`);
       setShowMonthValuesModal(false);
-      loadFundSettings(); // Reload to show updated fund value
     } catch (error) {
       alert('Failed to save month values');
     }

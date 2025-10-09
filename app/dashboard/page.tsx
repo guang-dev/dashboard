@@ -38,7 +38,6 @@ export default function DashboardPage() {
     monthReturn: 0,
     beginningValue: 0
   });
-  const [previousMonthReturn, setPreviousMonthReturn] = useState<number | null>(null);
   const [totalFundValue, setTotalFundValue] = useState(0);
 
   useEffect(() => {
@@ -68,7 +67,6 @@ export default function DashboardPage() {
   useEffect(() => {
     if (currentUser && totalFundValue > 0) {
       loadDashboardData(currentUser, selectedDate);
-      loadPreviousMonthReturn(currentUser, selectedDate);
     }
   }, [selectedDate, totalFundValue]);
 
@@ -149,56 +147,6 @@ export default function DashboardPage() {
     });
   };
 
-  const loadPreviousMonthReturn = async (user: User, date: Date) => {
-    // Get previous month
-    const prevMonth = date.getMonth(); // Current month is already +1, so this gives us previous
-    const prevYear = prevMonth === 0 ? date.getFullYear() - 1 : date.getFullYear();
-    const adjustedPrevMonth = prevMonth === 0 ? 12 : prevMonth;
-
-    try {
-      const [returnsRes, calendarRes, monthlyValueRes] = await Promise.all([
-        fetch(`/api/fund-returns?year=${prevYear}&month=${adjustedPrevMonth}&t=${Date.now()}`, {
-          cache: 'no-store'
-        }),
-        fetch(`/api/calendar?year=${prevYear}&month=${adjustedPrevMonth}&t=${Date.now()}`, {
-          cache: 'no-store'
-        }),
-        fetch(`/api/month-values?userId=${user.id}&year=${prevYear}&month=${adjustedPrevMonth}&t=${Date.now()}`, {
-          cache: 'no-store'
-        })
-      ]);
-
-      if (returnsRes.ok && calendarRes.ok) {
-        const returnsData = await returnsRes.json();
-        const calendarData = await calendarRes.json();
-        const monthlyValueData = monthlyValueRes.ok ? await monthlyValueRes.json() : null;
-
-        const tradingDates = new Set(calendarData.days.map((day: TradingDay) => day.date));
-        const validReturns = returnsData.returns.filter((ret: FundReturn) => tradingDates.has(ret.date));
-
-        // Use monthly beginning value if available, otherwise calculate from total fund
-        const userBeginningValue = monthlyValueData?.value
-          ? monthlyValueData.value.beginning_value
-          : totalFundValue * (user.ownership_percentage / 100);
-
-        let currentValue = userBeginningValue;
-
-        for (const fundReturn of validReturns) {
-          const userShare = fundReturn.dollar_change * (user.ownership_percentage / 100);
-          currentValue += userShare;
-        }
-
-        const change = currentValue - userBeginningValue;
-        const percentChange = userBeginningValue !== 0 ? (change / userBeginningValue) * 100 : 0;
-
-        setPreviousMonthReturn(percentChange);
-      } else {
-        setPreviousMonthReturn(null);
-      }
-    } catch (error) {
-      setPreviousMonthReturn(null);
-    }
-  };
 
   const handlePreviousMonth = () => {
     setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1));
@@ -282,20 +230,6 @@ export default function DashboardPage() {
               <span className="text-gray-600">Account Name:</span>
               <span className="font-semibold text-gray-800">
                 {currentUser.first_name} {currentUser.last_name}
-              </span>
-            </div>
-            {previousMonthReturn !== null && (
-              <div className="flex justify-between items-center bg-blue-50 -mx-6 px-6 py-2">
-                <span className="text-gray-600">Previous Month Return:</span>
-                <span className={`font-semibold ${previousMonthReturn >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {previousMonthReturn >= 0 ? '+' : ''}{previousMonthReturn.toFixed(1)}%
-                </span>
-              </div>
-            )}
-            <div className="flex justify-between items-center">
-              <span className="text-gray-600">Ownership:</span>
-              <span className="font-semibold text-gray-800">
-                {currentUser.ownership_percentage}%
               </span>
             </div>
             <div className="flex justify-between items-center">
