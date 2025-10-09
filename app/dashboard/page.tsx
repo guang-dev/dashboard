@@ -131,14 +131,29 @@ export default function DashboardPage() {
       monthlyValue = data.value;
     }
 
-    // Use monthly beginning value and ownership if available, otherwise use user's profile values
-    const userBeginningValue = monthlyValue
-      ? monthlyValue.beginning_value
-      : totalFundValue * (user.ownership_percentage / 100);
+    // Get fund settings to determine current month
+    const settingsRes = await fetch('/api/fund-settings');
+    const settingsData = await settingsRes.json();
+    const currentMonthYear = settingsData.settings?.current_month_year || '2025-10';
+    const [currentYear, currentMonth] = currentMonthYear.split('-').map(Number);
+    const isCurrentMonth = year === currentYear && month === currentMonth;
 
-    const userOwnershipPercentage = monthlyValue
-      ? monthlyValue.ownership_percentage
-      : user.ownership_percentage;
+    // Use monthly beginning value and ownership if available
+    // For current month without monthly values, use user's profile values directly
+    // For other months without monthly values, use 0
+    let userBeginningValue = 0;
+    let userOwnershipPercentage = 0;
+
+    if (monthlyValue) {
+      // Monthly value exists for this month
+      userBeginningValue = monthlyValue.beginning_value;
+      userOwnershipPercentage = monthlyValue.ownership_percentage;
+    } else if (isCurrentMonth) {
+      // Current month without monthly value - use user's profile values
+      userBeginningValue = user.beginning_value;
+      userOwnershipPercentage = user.ownership_percentage;
+    }
+    // Otherwise stays 0 for past/future months without monthly values
 
     // Calculate account summary after all data is loaded
     const tradingDates = new Set(days.map(day => day.date));
