@@ -530,13 +530,88 @@ export default function AdminPage() {
   const handleDeleteUser = async (id: number) => {
     if (!confirm('Are you sure you want to delete this user? All their data will be lost.')) return;
 
+    const year = selectedDate.getFullYear();
+    const month = selectedDate.getMonth() + 1;
+
+    // Get fund settings to determine current month
+    const settingsRes = await fetch('/api/fund-settings');
+    const settingsData = await settingsRes.json();
+    const currentMonthYear = settingsData.settings?.current_month_year || '2025-10';
+    const [currentYear, currentMonth] = currentMonthYear.split('-').map(Number);
+    const isCurrentMonth = year === currentYear && month === currentMonth;
+
     const res = await fetch(`/api/users?id=${id}`, {
       method: 'DELETE',
     });
 
     if (res.ok) {
+      // Reload users to get the updated list
+      const usersRes = await fetch('/api/users');
+      if (usersRes.ok) {
+        const usersData = await usersRes.json();
+        const remainingUsers = usersData.users;
+
+        if (isCurrentMonth && remainingUsers.length > 0) {
+          // Recalculate ownership percentages for current month
+          const newTotalFund = remainingUsers.reduce((sum: number, u: User) => sum + u.beginning_value, 0);
+
+          // Update ownership percentage for all remaining users
+          for (const user of remainingUsers) {
+            const updatedOwnership = newTotalFund > 0 ? (user.beginning_value / newTotalFund) * 100 : 0;
+            await fetch('/api/users', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: user.id,
+                firstName: user.first_name,
+                lastName: user.last_name,
+                beginningValue: user.beginning_value,
+                ownershipPercentage: updatedOwnership
+              }),
+            });
+          }
+        }
+
+        // If viewing a non-current month, recalculate monthly values for that month
+        if (!isCurrentMonth) {
+          // Get monthly values for all remaining users for this month
+          const monthlyValuesPromises = remainingUsers.map((user: User) =>
+            fetch(`/api/month-values?userId=${user.id}&year=${year}&month=${month}`).then(r => r.json())
+          );
+          const monthlyValuesResults = await Promise.all(monthlyValuesPromises);
+
+          // Calculate new total fund for this month
+          const newTotalFund = monthlyValuesResults.reduce((sum, result) => {
+            return sum + (result?.value?.beginning_value || 0);
+          }, 0);
+
+          // Update monthly values for remaining users if they exist
+          if (newTotalFund > 0) {
+            for (let i = 0; i < remainingUsers.length; i++) {
+              const monthlyValue = monthlyValuesResults[i]?.value;
+              if (monthlyValue) {
+                const updatedOwnership = (monthlyValue.beginning_value / newTotalFund) * 100;
+                await fetch('/api/month-values', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    userId: remainingUsers[i].id,
+                    year,
+                    month,
+                    beginningValue: monthlyValue.beginning_value,
+                    ownershipPercentage: updatedOwnership
+                  }),
+                });
+              }
+            }
+          }
+        }
+      }
+
       loadUsers();
-      alert('User deleted successfully!');
+      loadFundReturns();
+      calculateUserSummaries();
+      alert('User deleted successfully! Ownership percentages have been recalculated.');
     }
   };
 
