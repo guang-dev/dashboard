@@ -36,7 +36,8 @@ export default function DashboardPage() {
     change: 0,
     percentChange: 0,
     monthReturn: 0,
-    beginningValue: 0
+    beginningValue: 0,
+    ownershipPercentage: 0
   });
   const [totalFundValue, setTotalFundValue] = useState(0);
 
@@ -118,10 +119,14 @@ export default function DashboardPage() {
       monthlyValue = data.value;
     }
 
-    // Use monthly beginning value if available, otherwise calculate from total fund
+    // Use monthly beginning value and ownership if available, otherwise use user's profile values
     const userBeginningValue = monthlyValue
       ? monthlyValue.beginning_value
       : totalFundValue * (user.ownership_percentage / 100);
+
+    const userOwnershipPercentage = monthlyValue
+      ? monthlyValue.ownership_percentage
+      : user.ownership_percentage;
 
     // Calculate account summary after all data is loaded
     const tradingDates = new Set(days.map(day => day.date));
@@ -131,7 +136,7 @@ export default function DashboardPage() {
 
     for (const fundReturn of validReturns) {
       // Calculate user's share of the fund's dollar change based on ownership %
-      const userShare = fundReturn.dollar_change * (user.ownership_percentage / 100);
+      const userShare = fundReturn.dollar_change * (userOwnershipPercentage / 100);
       currentValue += userShare;
     }
 
@@ -143,7 +148,8 @@ export default function DashboardPage() {
       change,
       percentChange,
       monthReturn: percentChange,
-      beginningValue: userBeginningValue
+      beginningValue: userBeginningValue,
+      ownershipPercentage: userOwnershipPercentage
     });
   };
 
@@ -182,13 +188,14 @@ export default function DashboardPage() {
   }));
 
   // Calculate cumulative return for each day and user's share
-  // Use the same beginning value as Account Summary for consistency
+  // Use the same beginning value and ownership as Account Summary for consistency
   const userBeginningValue = accountSummary.beginningValue;
+  const userOwnershipPercentage = accountSummary.ownershipPercentage;
   let cumulativeReturn = 0;
   let runningValue = userBeginningValue;
   const dailyDataWithCumulative = dailyData.map(day => {
     if (day.fundReturn) {
-      const userShare = day.fundReturn.dollar_change * (currentUser.ownership_percentage / 100);
+      const userShare = day.fundReturn.dollar_change * (userOwnershipPercentage / 100);
       runningValue += userShare;
       const dayReturn = userBeginningValue !== 0 ? (userShare / userBeginningValue) * 100 : 0;
       cumulativeReturn = ((runningValue - userBeginningValue) / userBeginningValue) * 100;
