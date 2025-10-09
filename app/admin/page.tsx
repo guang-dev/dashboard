@@ -271,7 +271,16 @@ export default function AdminPage() {
     const [currentYear, currentMonth] = currentMonthYear.split('-').map(Number);
     const isStartingInCurrentMonth = startYear === currentYear && startMonth === currentMonth;
 
-    // Create user with 0 beginning value and ownership (will be set via monthly values)
+    // Calculate ownership percentage upfront
+    let initialOwnership = 0;
+    let initialBeginningValue = 0;
+    if (isStartingInCurrentMonth) {
+      const currentTotalFund = users.reduce((sum, u) => sum + u.beginning_value, 0) + beginningValue;
+      initialOwnership = (beginningValue / currentTotalFund) * 100;
+      initialBeginningValue = beginningValue;
+    }
+
+    // Create user with correct beginning value and ownership
     const res = await fetch('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -280,8 +289,8 @@ export default function AdminPage() {
         password: newUser.password,
         firstName: newUser.firstName,
         lastName: newUser.lastName,
-        beginningValue: isStartingInCurrentMonth ? beginningValue : 0,
-        ownershipPercentage: 0
+        beginningValue: initialBeginningValue,
+        ownershipPercentage: initialOwnership
       }),
     });
 
@@ -290,7 +299,7 @@ export default function AdminPage() {
       const newUserId = userData.id;
 
       if (isStartingInCurrentMonth) {
-        // Recalculate ownership for current month
+        // Recalculate ownership for existing users
         const currentTotalFund = users.reduce((sum, u) => sum + u.beginning_value, 0) + beginningValue;
 
         for (const user of users) {
@@ -307,20 +316,6 @@ export default function AdminPage() {
             }),
           });
         }
-
-        // Update new user's ownership
-        const newUserOwnership = (beginningValue / currentTotalFund) * 100;
-        await fetch('/api/users', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: newUserId,
-            firstName: newUser.firstName,
-            lastName: newUser.lastName,
-            beginningValue: beginningValue,
-            ownershipPercentage: newUserOwnership
-          }),
-        });
       } else {
         // Create monthly value for the starting month
         // Get existing monthly values for that month
