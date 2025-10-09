@@ -30,7 +30,6 @@ export default function DashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [fundReturns, setFundReturns] = useState<FundReturn[]>([]);
   const [tradingDays, setTradingDays] = useState<TradingDay[]>([]);
-  const [selectedDate, setSelectedDate] = useState(new Date());
   const [accountSummary, setAccountSummary] = useState({
     currentValue: 0,
     change: 0,
@@ -66,22 +65,17 @@ export default function DashboardPage() {
         setCurrentUser(freshUser);
         // Update sessionStorage with fresh data
         sessionStorage.setItem('user', JSON.stringify(freshUser));
-        await loadDashboardData(freshUser, selectedDate);
+        // For individual users, always show current month
+        await loadDashboardData(freshUser, new Date());
       } else {
         // Fallback to cached user if API fails
         setCurrentUser(user);
-        await loadDashboardData(user, selectedDate);
+        await loadDashboardData(user, new Date());
       }
     };
 
     initializeDashboard();
   }, [router]);
-
-  useEffect(() => {
-    if (currentUser && totalFundValue > 0) {
-      loadDashboardData(currentUser, selectedDate);
-    }
-  }, [selectedDate, totalFundValue]);
 
   const loadFundSettings = async () => {
     const res = await fetch('/api/fund-settings');
@@ -93,9 +87,10 @@ export default function DashboardPage() {
     }
   };
 
-  const loadDashboardData = async (user: User, date: Date) => {
-    const year = date.getFullYear();
-    const month = date.getMonth() + 1;
+  const loadDashboardData = async (user: User, currentDate: Date = new Date()) => {
+    // For individual users, always use current date
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth() + 1;
 
     // Load fund returns, calendar, and monthly beginning value in parallel
     const [returnsRes, calendarRes, monthlyValueRes] = await Promise.all([
@@ -180,15 +175,6 @@ export default function DashboardPage() {
     });
   };
 
-
-  const handlePreviousMonth = () => {
-    setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1));
-  };
-
-  const handleNextMonth = () => {
-    setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1));
-  };
-
   const handleLogout = () => {
     sessionStorage.removeItem('user');
     router.push('/');
@@ -198,8 +184,10 @@ export default function DashboardPage() {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   }
 
-  const monthName = selectedDate.toLocaleString('en-US', { month: 'long' });
-  const year = selectedDate.getFullYear();
+  // Always show current month for individual users
+  const currentDate = new Date();
+  const monthName = currentDate.toLocaleString('en-US', { month: 'long' });
+  const year = currentDate.getFullYear();
 
   // Create a map of returns by date
   const returnsByDate = fundReturns.reduce((acc, ret) => {
@@ -299,23 +287,9 @@ export default function DashboardPage() {
             <h2 className="text-2xl font-semibold text-gray-800">
               Daily Returns
             </h2>
-            <div className="flex items-center gap-4">
-              <button
-                onClick={handlePreviousMonth}
-                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md transition-colors"
-              >
-                ← Previous
-              </button>
-              <span className="text-lg font-medium text-gray-700">
-                {monthName} {year}
-              </span>
-              <button
-                onClick={handleNextMonth}
-                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-md transition-colors"
-              >
-                Next →
-              </button>
-            </div>
+            <span className="text-lg font-medium text-gray-700">
+              {monthName} {year}
+            </span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">

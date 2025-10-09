@@ -979,20 +979,6 @@ export default function AdminPage() {
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-2xl font-semibold text-gray-800">Fund Overview</h2>
-            <div className="flex gap-2">
-              <button
-                onClick={handleCheckCalendar}
-                className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm"
-              >
-                Check Calendar
-              </button>
-              <button
-                onClick={handleInitCalendar}
-                className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm"
-              >
-                Init Calendar
-              </button>
-            </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="p-4 bg-blue-50 rounded-lg">
