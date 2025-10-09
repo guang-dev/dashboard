@@ -27,15 +27,15 @@ export function createUser(
   lastName: string,
   beginningValue: number,
   ownershipPercentage: number = 0
-): boolean {
+): number | null {
   try {
-    db.prepare(`
+    const result = db.prepare(`
       INSERT INTO users (username, password, first_name, last_name, beginning_value, ownership_percentage, is_admin)
       VALUES (?, ?, ?, ?, ?, ?, 0)
     `).run(username, password, firstName, lastName, beginningValue, ownershipPercentage);
-    return true;
+    return result.lastInsertRowid as number;
   } catch (error) {
-    return false;
+    return null;
   }
 }
 
@@ -46,6 +46,16 @@ export function getAllUsers(): User[] {
     WHERE is_admin = 0
     ORDER BY id
   `).all() as User[];
+}
+
+export function getUserById(id: number): User | null {
+  const user = db.prepare(`
+    SELECT id, username, first_name, last_name, beginning_value, ownership_percentage, is_admin
+    FROM users
+    WHERE id = ?
+  `).get(id) as User | undefined;
+
+  return user || null;
 }
 
 export function updateUser(

@@ -1,8 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createUser, getAllUsers, deleteUser } from '@/lib/auth';
+import { createUser, getAllUsers, deleteUser, getUserById } from '@/lib/auth';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get('id');
+
+    // If ID is provided, return single user
+    if (id) {
+      const user = getUserById(parseInt(id));
+      if (!user) {
+        return NextResponse.json(
+          { error: 'User not found' },
+          { status: 404 }
+        );
+      }
+      return NextResponse.json({ user });
+    }
+
+    // Otherwise return all users
     const users = getAllUsers();
     return NextResponse.json({ users });
   } catch (error) {
@@ -24,16 +40,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const success = createUser(username, password, firstName, lastName, beginningValue, ownershipPercentage || 0);
+    const userId = createUser(username, password, firstName, lastName, beginningValue, ownershipPercentage || 0);
 
-    if (!success) {
+    if (!userId) {
       return NextResponse.json(
         { error: 'Username already exists' },
         { status: 400 }
       );
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, id: userId });
   } catch (error) {
     return NextResponse.json(
       { error: 'Failed to create user' },

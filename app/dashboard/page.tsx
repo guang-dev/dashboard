@@ -54,12 +54,24 @@ export default function DashboardPage() {
       return;
     }
 
-    setCurrentUser(user);
-
-    // Load fund settings first, then load dashboard data
+    // Load fund settings first, then reload fresh user data and load dashboard
     const initializeDashboard = async () => {
       await loadFundSettings();
-      await loadDashboardData(user, selectedDate);
+
+      // Reload fresh user data from API
+      const userRes = await fetch(`/api/users?id=${user.id}`);
+      if (userRes.ok) {
+        const userData = await userRes.json();
+        const freshUser = userData.user;
+        setCurrentUser(freshUser);
+        // Update sessionStorage with fresh data
+        sessionStorage.setItem('user', JSON.stringify(freshUser));
+        await loadDashboardData(freshUser, selectedDate);
+      } else {
+        // Fallback to cached user if API fails
+        setCurrentUser(user);
+        await loadDashboardData(user, selectedDate);
+      }
     };
 
     initializeDashboard();
