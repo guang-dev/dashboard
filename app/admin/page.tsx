@@ -30,6 +30,8 @@ interface UserSummary {
   currentValue: number;
   change: number;
   percentChange: number;
+  beginningValue: number;
+  displayOwnership: number;
 }
 
 export default function AdminPage() {
@@ -44,6 +46,7 @@ export default function AdminPage() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [editingUser, setEditingUser] = useState<number | null>(null);
   const [totalFundValue, setTotalFundValue] = useState(0);
+  const [displayedFundValue, setDisplayedFundValue] = useState(0);
   const [editingFundValue, setEditingFundValue] = useState(false);
   const [newFundValue, setNewFundValue] = useState('');
   const [userSummaries, setUserSummaries] = useState<UserSummary[]>([]);
@@ -63,7 +66,9 @@ export default function AdminPage() {
     password: '',
     firstName: '',
     lastName: '',
-    ownershipPercentage: ''
+    beginningValue: '',
+    startYear: new Date().getFullYear(),
+    startMonth: new Date().getMonth() + 1
   });
 
   // Daily return form
@@ -164,33 +169,64 @@ export default function AdminPage() {
   };
 
   const calculateUserSummaries = async () => {
-    if (totalFundValue === 0) return;
-
     const tradingDates = new Set(tradingDays.map(day => day.date));
     const validReturns = fundReturns.filter(ret => tradingDates.has(ret.date));
 
     const year = selectedDate.getFullYear();
     const month = selectedDate.getMonth() + 1;
 
-    // Load monthly beginning values for current month
+    // Get fund settings to determine current month
+    const settingsRes = await fetch('/api/fund-settings');
+    const settingsData = await settingsRes.json();
+    const currentMonthYear = settingsData.settings?.current_month_year || '2025-10';
+    const [currentYear, currentMonth] = currentMonthYear.split('-').map(Number);
+
+    const isCurrentMonth = year === currentYear && month === currentMonth;
+
+    // Load monthly beginning values for selected month
     const monthlyValuesPromises = users.map(user =>
       fetch(`/api/month-values?userId=${user.id}&year=${year}&month=${month}`).then(r => r.json())
     );
     const monthlyValuesResults = await Promise.all(monthlyValuesPromises);
 
+    // Check if any users have monthly values for this month
+    const hasMonthlyValues = monthlyValuesResults.some(result => result?.value);
+
+    // Calculate display total fund
+    let displayTotalFund = 0;
+    if (hasMonthlyValues) {
+      // If monthly values exist, sum them
+      displayTotalFund = monthlyValuesResults.reduce((sum, result) => {
+        return sum + (result?.value?.beginning_value || 0);
+      }, 0);
+    } else if (isCurrentMonth) {
+      // If it's current month without monthly values, use user beginning_value
+      displayTotalFund = users.reduce((sum, user) => sum + user.beginning_value, 0);
+    }
+    // Otherwise displayTotalFund stays 0 for future months
+
     const summaries = users.map((user, idx) => {
       const monthlyValue = monthlyValuesResults[idx]?.value;
 
-      // Use monthly beginning value if available, otherwise calculate from total fund
-      const userBeginningValue = monthlyValue
-        ? monthlyValue.beginning_value
-        : totalFundValue * (user.ownership_percentage / 100);
+      let userBeginningValue = 0;
+      let ownershipPct = 0;
+
+      if (monthlyValue) {
+        // Use monthly value if set
+        userBeginningValue = monthlyValue.beginning_value;
+        ownershipPct = monthlyValue.ownership_percentage;
+      } else if (isCurrentMonth) {
+        // Use user's beginning_value for current month
+        userBeginningValue = user.beginning_value;
+        ownershipPct = user.ownership_percentage;
+      }
+      // Otherwise stays 0 for future months
 
       let currentValue = userBeginningValue;
 
       for (const fundReturn of validReturns) {
-        // Calculate user's share of the fund's dollar change based on ownership %
-        const userShare = fundReturn.dollar_change * (user.ownership_percentage / 100);
+        // Use the appropriate ownership percentage (monthly if available, otherwise user's)
+        const userShare = fundReturn.dollar_change * (ownershipPct / 100);
         currentValue += userShare;
       }
 
@@ -201,11 +237,16 @@ export default function AdminPage() {
         user,
         currentValue,
         change,
-        percentChange
+        percentChange,
+        beginningValue: userBeginningValue,
+        displayOwnership: ownershipPct
       };
     });
 
     setUserSummaries(summaries);
+
+    // Update displayed total fund value
+    setDisplayedFundValue(displayTotalFund);
   };
 
   const handlePreviousMonth = () => {
@@ -219,19 +260,18 @@ export default function AdminPage() {
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Check if adding this user would exceed 100% ownership
-    const currentTotalOwnership = users.reduce((sum, u) => sum + u.ownership_percentage, 0);
-    const newOwnership = parseFloat(newUser.ownershipPercentage);
-    const totalAfterAdd = currentTotalOwnership + newOwnership;
+    const beginningValue = parseFloat(newUser.beginningValue);
+    const startYear = newUser.startYear;
+    const startMonth = newUser.startMonth;
 
-    if (totalAfterAdd > 100) {
-      alert(`Cannot add user: Total ownership would be ${totalAfterAdd.toFixed(1)}% (exceeds 100%). Current allocation: ${currentTotalOwnership.toFixed(1)}%, Available: ${(100 - currentTotalOwnership).toFixed(1)}%`);
-      return;
-    }
+    // Get fund settings to determine current month
+    const settingsRes = await fetch('/api/fund-settings');
+    const settingsData = await settingsRes.json();
+    const currentMonthYear = settingsData.settings?.current_month_year || '2025-10';
+    const [currentYear, currentMonth] = currentMonthYear.split('-').map(Number);
+    const isStartingInCurrentMonth = startYear === currentYear && startMonth === currentMonth;
 
-    // Calculate beginning value based on ownership and total fund
-    const beginningValue = totalFundValue * (newOwnership / 100);
-
+    // Create user with 0 beginning value and ownership (will be set via monthly values)
     const res = await fetch('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -240,15 +280,108 @@ export default function AdminPage() {
         password: newUser.password,
         firstName: newUser.firstName,
         lastName: newUser.lastName,
-        beginningValue: beginningValue,
-        ownershipPercentage: newOwnership
+        beginningValue: isStartingInCurrentMonth ? beginningValue : 0,
+        ownershipPercentage: 0
       }),
     });
 
     if (res.ok) {
-      setNewUser({ username: '', password: '', firstName: '', lastName: '', ownershipPercentage: '' });
+      const userData = await res.json();
+      const newUserId = userData.id;
+
+      if (isStartingInCurrentMonth) {
+        // Recalculate ownership for current month
+        const currentTotalFund = users.reduce((sum, u) => sum + u.beginning_value, 0) + beginningValue;
+
+        for (const user of users) {
+          const updatedOwnership = (user.beginning_value / currentTotalFund) * 100;
+          await fetch('/api/users', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: user.id,
+              firstName: user.first_name,
+              lastName: user.last_name,
+              beginningValue: user.beginning_value,
+              ownershipPercentage: updatedOwnership
+            }),
+          });
+        }
+
+        // Update new user's ownership
+        const newUserOwnership = (beginningValue / currentTotalFund) * 100;
+        await fetch('/api/users', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: newUserId,
+            firstName: newUser.firstName,
+            lastName: newUser.lastName,
+            beginningValue: beginningValue,
+            ownershipPercentage: newUserOwnership
+          }),
+        });
+      } else {
+        // Create monthly value for the starting month
+        // Get existing monthly values for that month
+        const monthlyValuesPromises = users.map(user =>
+          fetch(`/api/month-values?userId=${user.id}&year=${startYear}&month=${startMonth}`).then(r => r.json())
+        );
+        const monthlyValuesResults = await Promise.all(monthlyValuesPromises);
+
+        // Calculate new total fund
+        let newTotalFund = beginningValue;
+        for (let i = 0; i < users.length; i++) {
+          const monthlyValue = monthlyValuesResults[i]?.value;
+          newTotalFund += monthlyValue?.beginning_value || 0;
+        }
+
+        // Create monthly value for new user
+        const newOwnership = (beginningValue / newTotalFund) * 100;
+        await fetch('/api/month-values', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: newUserId,
+            year: startYear,
+            month: startMonth,
+            beginningValue: beginningValue,
+            ownershipPercentage: newOwnership
+          }),
+        });
+
+        // Recalculate ownership for all other users in that month
+        for (let i = 0; i < users.length; i++) {
+          const monthlyValue = monthlyValuesResults[i]?.value;
+          if (monthlyValue) {
+            const updatedOwnership = (monthlyValue.beginning_value / newTotalFund) * 100;
+            await fetch('/api/month-values', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId: users[i].id,
+                year: startYear,
+                month: startMonth,
+                beginningValue: monthlyValue.beginning_value,
+                ownershipPercentage: updatedOwnership
+              }),
+            });
+          }
+        }
+      }
+
+      setNewUser({
+        username: '',
+        password: '',
+        firstName: '',
+        lastName: '',
+        beginningValue: '',
+        startYear: new Date().getFullYear(),
+        startMonth: new Date().getMonth() + 1
+      });
       setShowUserForm(false);
       loadUsers();
+      calculateUserSummaries();
       alert('User created successfully!');
     } else {
       const data = await res.json();
@@ -257,44 +390,146 @@ export default function AdminPage() {
   };
 
   const handleUpdateUser = async (id: number) => {
-    const newOwnership = parseFloat(editUserData.ownershipPercentage);
+    const beginningValue = parseFloat(editUserData.beginningValue);
+    const year = selectedDate.getFullYear();
+    const month = selectedDate.getMonth() + 1;
 
-    // Check if updating this user would exceed 100% ownership
-    // Calculate total excluding the user being edited
-    const currentUser = users.find(u => u.id === id);
-    const otherUsersOwnership = users
-      .filter(u => u.id !== id)
-      .reduce((sum, u) => sum + u.ownership_percentage, 0);
-    const totalAfterUpdate = otherUsersOwnership + newOwnership;
+    // Get fund settings to determine current month
+    const settingsRes = await fetch('/api/fund-settings');
+    const settingsData = await settingsRes.json();
+    const currentMonthYear = settingsData.settings?.current_month_year || '2025-10';
+    const [currentYear, currentMonth] = currentMonthYear.split('-').map(Number);
+    const isCurrentMonth = year === currentYear && month === currentMonth;
 
-    if (totalAfterUpdate > 100) {
-      alert(`Cannot update user: Total ownership would be ${totalAfterUpdate.toFixed(1)}% (exceeds 100%). Other users: ${otherUsersOwnership.toFixed(1)}%, Available: ${(100 - otherUsersOwnership).toFixed(1)}%`);
-      return;
+    // Get all user summaries to find current beginning values for this month
+    const monthlyValuesPromises = users.map(user =>
+      fetch(`/api/month-values?userId=${user.id}&year=${year}&month=${month}`).then(r => r.json())
+    );
+    const monthlyValuesResults = await Promise.all(monthlyValuesPromises);
+
+    // Calculate new total fund
+    let newTotalFund = beginningValue;
+    for (let i = 0; i < users.length; i++) {
+      if (users[i].id !== id) {
+        const monthlyValue = monthlyValuesResults[i]?.value;
+        const userBeginningValue = monthlyValue
+          ? monthlyValue.beginning_value
+          : (isCurrentMonth ? users[i].beginning_value : 0);
+        newTotalFund += userBeginningValue;
+      }
     }
 
-    // Calculate beginning value based on ownership and total fund
-    const beginningValue = totalFundValue * (newOwnership / 100);
+    if (isCurrentMonth) {
+      // Update user profile (October values)
+      const newOwnership = (beginningValue / newTotalFund) * 100;
 
-    const res = await fetch('/api/users', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id,
-        firstName: editUserData.firstName,
-        lastName: editUserData.lastName,
-        beginningValue: beginningValue,
-        ownershipPercentage: newOwnership
-      }),
-    });
+      const res = await fetch('/api/users', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id,
+          firstName: editUserData.firstName,
+          lastName: editUserData.lastName,
+          beginningValue: beginningValue,
+          ownershipPercentage: newOwnership
+        }),
+      });
 
-    if (res.ok) {
-      setEditingUser(null);
-      loadUsers();
-      alert('User updated successfully!');
+      if (res.ok) {
+        // Recalculate ownership percentages for ALL users
+        for (const user of users) {
+          if (user.id !== id) {
+            const updatedOwnership = (user.beginning_value / newTotalFund) * 100;
+            await fetch('/api/users', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: user.id,
+                firstName: user.first_name,
+                lastName: user.last_name,
+                beginningValue: user.beginning_value,
+                ownershipPercentage: updatedOwnership
+              }),
+            });
+          }
+        }
+      }
     } else {
-      const data = await res.json();
-      alert(data.error || 'Failed to update user');
+      // Update/create monthly values for this specific month
+      const newOwnership = (beginningValue / newTotalFund) * 100;
+
+      // Save monthly value for edited user
+      await fetch('/api/month-values', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: id,
+          year,
+          month,
+          beginningValue: beginningValue,
+          ownershipPercentage: newOwnership
+        }),
+      });
+
+      // Recalculate and save monthly values for all other users
+      for (let i = 0; i < users.length; i++) {
+        if (users[i].id !== id) {
+          const monthlyValue = monthlyValuesResults[i]?.value;
+          const userBeginningValue = monthlyValue?.beginning_value || 0;
+
+          if (userBeginningValue > 0 || monthlyValue) {
+            const updatedOwnership = (userBeginningValue / newTotalFund) * 100;
+            await fetch('/api/month-values', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId: users[i].id,
+                year,
+                month,
+                beginningValue: userBeginningValue,
+                ownershipPercentage: updatedOwnership
+              }),
+            });
+          }
+        }
+      }
+
+      // Also update user profile (name changes)
+      await fetch('/api/users', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id,
+          firstName: editUserData.firstName,
+          lastName: editUserData.lastName,
+          beginningValue: users.find(u => u.id === id)!.beginning_value,
+          ownershipPercentage: users.find(u => u.id === id)!.ownership_percentage
+        }),
+      });
     }
+
+    // Update all fund returns for this month to use the new total fund value
+    const returnsRes = await fetch(`/api/fund-returns?year=${year}&month=${month}`);
+    if (returnsRes.ok) {
+      const returnsData = await returnsRes.json();
+      for (const fundReturn of returnsData.returns) {
+        await fetch('/api/fund-returns', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: fundReturn.id,
+            dollarChange: fundReturn.dollar_change,
+            totalFundValue: newTotalFund
+          }),
+        });
+      }
+    }
+
+    setEditingUser(null);
+    loadUsers();
+    loadFundReturns();
+    calculateUserSummaries();
+    alert('User updated successfully!');
   };
 
   const handleDeleteUser = async (id: number) => {
@@ -321,7 +556,7 @@ export default function AdminPage() {
       body: JSON.stringify({
         date: newReturn.date,
         dollarChange: dollarChange,
-        totalFundValue: totalFundValue  // Use the current total fund value
+        totalFundValue: displayedFundValue  // Use the displayed (calculated) fund value
       }),
     });
 
@@ -417,23 +652,18 @@ export default function AdminPage() {
 
   const handleSaveMonthValues = async () => {
     try {
-      // Calculate total fund value from all user beginning values
-      const totalNextMonthFund = users.reduce((sum, user) => {
+      // Calculate total fund from all user beginning values
+      const totalFund = users.reduce((sum, user) => {
         const values = monthValuesData[user.id];
-        return sum + (values ? parseFloat(values.beginningValue) : 0);
+        return sum + (values ? parseFloat(values.beginningValue) || 0 : 0);
       }, 0);
 
-      if (totalNextMonthFund === 0) {
-        alert('Cannot save: Total fund value is $0. Please enter beginning values.');
-        return;
-      }
-
-      // Calculate ownership percentages from beginning values
+      // Save monthly values with calculated ownership percentages
       for (const user of users) {
         const values = monthValuesData[user.id];
         if (values) {
           const beginningValue = parseFloat(values.beginningValue);
-          const ownershipPercentage = (beginningValue / totalNextMonthFund) * 100;
+          const ownershipPercentage = totalFund > 0 ? (beginningValue / totalFund) * 100 : 0;
 
           await fetch('/api/month-values', {
             method: 'POST',
@@ -443,7 +673,7 @@ export default function AdminPage() {
               year: selectedMonthYear.year,
               month: selectedMonthYear.month,
               beginningValue: beginningValue,
-              ownershipPercentage: ownershipPercentage
+              ownershipPercentage: ownershipPercentage // Calculate from beginning values
             }),
           });
         }
@@ -498,13 +728,13 @@ export default function AdminPage() {
   dailyData.sort((a, b) => a.date.localeCompare(b.date));
 
   // Calculate cumulative return percentage for the fund
-  let cumulativeFundValue = totalFundValue;
+  let cumulativeFundValue = displayedFundValue;
   const dailyDataWithCumulative = dailyData.map(day => {
     if (day.return && day.isValid) {
       cumulativeFundValue += day.return.dollar_change;
     }
-    const cumulativeReturnPct = totalFundValue !== 0
-      ? ((cumulativeFundValue - totalFundValue) / totalFundValue) * 100
+    const cumulativeReturnPct = displayedFundValue !== 0
+      ? ((cumulativeFundValue - displayedFundValue) / displayedFundValue) * 100
       : 0;
 
     return {
@@ -606,6 +836,7 @@ export default function AdminPage() {
 
               <div className="space-y-4">
                 {users.map(user => {
+                  // Calculate ownership % based on beginning values
                   const totalFund = users.reduce((sum, u) => {
                     const values = monthValuesData[u.id];
                     return sum + (values ? parseFloat(values.beginningValue) || 0 : 0);
@@ -628,7 +859,7 @@ export default function AdminPage() {
                               [user.id]: {
                                 ...monthValuesData[user.id],
                                 beginningValue: e.target.value,
-                                ownershipPercentage: '' // Not used anymore
+                                ownershipPercentage: user.ownership_percentage.toString()
                               }
                             })}
                             className="w-full px-3 py-2 border rounded-md"
@@ -706,12 +937,39 @@ export default function AdminPage() {
               <input
                 type="number"
                 step="0.01"
-                placeholder="Ownership % (e.g., 10 for 10%)"
-                value={newUser.ownershipPercentage}
-                onChange={(e) => setNewUser({ ...newUser, ownershipPercentage: e.target.value })}
+                placeholder="Beginning Value (e.g., 2600)"
+                value={newUser.beginningValue}
+                onChange={(e) => setNewUser({ ...newUser, beginningValue: e.target.value })}
                 className="px-3 py-2 border rounded-md"
                 required
               />
+              <select
+                value={newUser.startMonth}
+                onChange={(e) => setNewUser({ ...newUser, startMonth: parseInt(e.target.value) })}
+                className="px-3 py-2 border rounded-md"
+              >
+                <option value={1}>January</option>
+                <option value={2}>February</option>
+                <option value={3}>March</option>
+                <option value={4}>April</option>
+                <option value={5}>May</option>
+                <option value={6}>June</option>
+                <option value={7}>July</option>
+                <option value={8}>August</option>
+                <option value={9}>September</option>
+                <option value={10}>October</option>
+                <option value={11}>November</option>
+                <option value={12}>December</option>
+              </select>
+              <select
+                value={newUser.startYear}
+                onChange={(e) => setNewUser({ ...newUser, startYear: parseInt(e.target.value) })}
+                className="px-3 py-2 border rounded-md"
+              >
+                {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 1 + i).map(year => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
               <button
                 type="submit"
                 className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 md:col-span-2 lg:col-span-5"
@@ -741,76 +999,39 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="p-4 bg-blue-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-2">Total Fund Value (Beginning)</p>
-              {editingFundValue ? (
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={newFundValue}
-                    onChange={(e) => setNewFundValue(e.target.value)}
-                    className="px-3 py-1 border rounded-md w-full"
-                    autoFocus
-                  />
-                  <button
-                    onClick={handleUpdateFundValue}
-                    className="text-green-600 hover:text-green-800 text-sm whitespace-nowrap"
-                  >
-                    Save
-                  </button>
-                  <button
-                    onClick={() => setEditingFundValue(false)}
-                    className="text-gray-600 hover:text-gray-800 text-sm"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <div className="flex justify-between items-center">
-                  <p className="text-2xl font-bold text-blue-600">
-                    ${totalFundValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                  </p>
-                  <button
-                    onClick={() => {
-                      setEditingFundValue(true);
-                      setNewFundValue(totalFundValue.toString());
-                    }}
-                    className="text-blue-600 hover:text-blue-800 text-sm"
-                  >
-                    Edit
-                  </button>
-                </div>
-              )}
+              <p className="text-sm text-gray-600 mb-2">Beginning Value</p>
+              <p className="text-2xl font-bold text-blue-600">
+                ${displayedFundValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              </p>
             </div>
             <div className="p-4 bg-green-50 rounded-lg">
-              <p className="text-sm text-gray-600">Total Users</p>
-              <p className="text-2xl font-bold text-green-600">{users.length}</p>
+              <p className="text-sm text-gray-600 mb-2">Current Value</p>
+              <p className="text-2xl font-bold text-green-600">
+                ${userSummaries.reduce((sum, s) => sum + s.currentValue, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              </p>
             </div>
             <div className={`p-4 rounded-lg ${
-              users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 100
-                ? 'bg-red-50'
-                : users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 95
-                ? 'bg-yellow-50'
-                : 'bg-purple-50'
+              userSummaries.reduce((sum, s) => sum + s.change, 0) >= 0 ? 'bg-green-50' : 'bg-red-50'
             }`}>
-              <p className="text-sm text-gray-600">Ownership Allocated</p>
+              <p className="text-sm text-gray-600 mb-2">Monthly Change</p>
               <p className={`text-2xl font-bold ${
-                users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 100
-                  ? 'text-red-600'
-                  : users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 95
-                  ? 'text-yellow-600'
-                  : 'text-purple-600'
+                userSummaries.reduce((sum, s) => sum + s.change, 0) >= 0 ? 'text-green-600' : 'text-red-600'
               }`}>
-                {users.reduce((sum, u) => sum + u.ownership_percentage, 0).toFixed(1)}%
+                {userSummaries.reduce((sum, s) => sum + s.change, 0) >= 0 ? '+' : ''}${userSummaries.reduce((sum, s) => sum + s.change, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </p>
-              {users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 100 && (
-                <p className="text-xs text-red-600 mt-1">⚠️ Exceeds 100%!</p>
-              )}
-              {users.reduce((sum, u) => sum + u.ownership_percentage, 0) > 95 && users.reduce((sum, u) => sum + u.ownership_percentage, 0) <= 100 && (
-                <p className="text-xs text-yellow-600 mt-1">⚠️ Near limit</p>
-              )}
+              <p className={`text-xs mt-1 ${
+                userSummaries.reduce((sum, s) => sum + s.change, 0) >= 0 ? 'text-green-600' : 'text-red-600'
+              }`}>
+                {displayedFundValue > 0 ? (
+                  <>{userSummaries.reduce((sum, s) => sum + s.change, 0) >= 0 ? '+' : ''}{((userSummaries.reduce((sum, s) => sum + s.change, 0) / displayedFundValue) * 100).toFixed(1)}%</>
+                ) : '0.0%'}
+              </p>
+            </div>
+            <div className="p-4 bg-purple-50 rounded-lg">
+              <p className="text-sm text-gray-600 mb-2">Total Users</p>
+              <p className="text-2xl font-bold text-purple-600">{users.length}</p>
             </div>
           </div>
         </div>
@@ -847,10 +1068,10 @@ export default function AdminPage() {
                       <input
                         type="number"
                         step="0.01"
-                        value={editUserData.ownershipPercentage}
-                        onChange={(e) => setEditUserData({ ...editUserData, ownershipPercentage: e.target.value })}
+                        value={editUserData.beginningValue}
+                        onChange={(e) => setEditUserData({ ...editUserData, beginningValue: e.target.value })}
                         className="w-full px-2 py-1 border rounded text-sm"
-                        placeholder="Ownership %"
+                        placeholder="Beginning Value"
                       />
                       <div className="flex gap-2 pt-2">
                         <button
@@ -874,10 +1095,10 @@ export default function AdminPage() {
                         <p className="text-sm text-gray-600">@{user.username}</p>
                         <div className="mt-2 space-y-1">
                           <p className="text-sm text-gray-800">
-                            Beginning: ${(totalFundValue * (user.ownership_percentage / 100)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            Beginning: ${summary?.beginningValue?.toLocaleString('en-US', { minimumFractionDigits: 2 }) || '0.00'}
                           </p>
                           <p className="text-sm text-gray-800">
-                            Ownership: {user.ownership_percentage}%
+                            Ownership: {summary?.displayOwnership?.toFixed(1) || user.ownership_percentage}%
                           </p>
                           {summary && (
                             <>
@@ -899,8 +1120,8 @@ export default function AdminPage() {
                             setEditUserData({
                               firstName: user.first_name,
                               lastName: user.last_name,
-                              beginningValue: '',
-                              ownershipPercentage: user.ownership_percentage.toString()
+                              beginningValue: user.beginning_value.toString(),
+                              ownershipPercentage: ''
                             });
                           }}
                           className="text-blue-600 hover:text-blue-800 text-sm"
@@ -952,7 +1173,7 @@ export default function AdminPage() {
               <label className="block text-sm text-gray-600 mb-1">Fund Value (auto)</label>
               <input
                 type="text"
-                value={`$${totalFundValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
+                value={`$${displayedFundValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
                 className="w-full px-3 py-2 border rounded-md bg-gray-100"
                 disabled
               />
