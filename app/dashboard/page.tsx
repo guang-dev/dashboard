@@ -18,6 +18,7 @@ interface FundReturn {
   date: string;
   dollar_change: number;
   total_fund_value: number;
+  percent_change?: number;
 }
 
 interface TradingDay {
@@ -152,14 +153,17 @@ export default function DashboardPage() {
 
     // Calculate account summary after all data is loaded
     const tradingDates = new Set(days.map(day => day.date));
-    const validReturns = returns.filter(ret => tradingDates.has(ret.date));
+    const validReturns = returns.filter(ret => tradingDates.has(ret.date)).sort((a, b) => a.date.localeCompare(b.date));
 
     let currentValue = userBeginningValue;
 
     for (const fundReturn of validReturns) {
-      // Calculate user's share of the fund's dollar change based on ownership %
-      const userShare = fundReturn.dollar_change * (userOwnershipPercentage / 100);
-      currentValue += userShare;
+      // Calculate user's dollar change based on their prior day balance and the daily % return
+      const percentChange = fundReturn.percent_change ??
+        (fundReturn.total_fund_value !== 0 ? (fundReturn.dollar_change / fundReturn.total_fund_value) * 100 : 0);
+
+      const userDollarChange = (percentChange / 100) * currentValue;
+      currentValue += userDollarChange;
     }
 
     const change = currentValue - userBeginningValue;
@@ -205,19 +209,23 @@ export default function DashboardPage() {
   // Calculate cumulative return for each day and user's share
   // Use the same beginning value and ownership as Account Summary for consistency
   const userBeginningValue = accountSummary.beginningValue;
-  const userOwnershipPercentage = accountSummary.ownershipPercentage;
   let cumulativeReturn = 0;
   let runningValue = userBeginningValue;
   const dailyDataWithCumulative = dailyData.map(day => {
     if (day.fundReturn) {
-      const userShare = day.fundReturn.dollar_change * (userOwnershipPercentage / 100);
-      runningValue += userShare;
-      const dayReturn = userBeginningValue !== 0 ? (userShare / userBeginningValue) * 100 : 0;
-      cumulativeReturn = ((runningValue - userBeginningValue) / userBeginningValue) * 100;
+      // Calculate user's dollar change based on prior day's balance and daily % return
+      const percentChange = day.fundReturn.percent_change ??
+        (day.fundReturn.total_fund_value !== 0 ? (day.fundReturn.dollar_change / day.fundReturn.total_fund_value) * 100 : 0);
+
+      const userDollarChange = (percentChange / 100) * runningValue;
+      runningValue += userDollarChange;
+
+      const dayReturn = percentChange; // The daily % return is the same for all investors
+      cumulativeReturn = userBeginningValue !== 0 ? ((runningValue - userBeginningValue) / userBeginningValue) * 100 : 0;
 
       return {
         ...day,
-        userDollarChange: userShare,
+        userDollarChange: userDollarChange,
         userDailyReturn: dayReturn,
         cumulativeReturn: cumulativeReturn
       };
@@ -296,9 +304,9 @@ export default function DashboardPage() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-2 text-left">Date</th>
-                  <th className="px-4 py-2 text-right">Dollar Change</th>
-                  <th className="px-4 py-2 text-right">Daily Return</th>
-                  <th className="px-4 py-2 text-right">Month's Current Return</th>
+                  <th className="px-4 py-2 text-right">Dollar Change ($)</th>
+                  <th className="px-4 py-2 text-right">Daily Return (%)</th>
+                  <th className="px-4 py-2 text-right">Month's Current Return (%)</th>
                 </tr>
               </thead>
               <tbody>

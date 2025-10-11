@@ -18,6 +18,7 @@ interface FundReturn {
   date: string;
   dollar_change: number;
   total_fund_value: number;
+  percent_change?: number;
 }
 
 interface TradingDay {
@@ -74,7 +75,7 @@ export default function AdminPage() {
   // Daily return form
   const [newReturn, setNewReturn] = useState({
     date: new Date().toISOString().split('T')[0],
-    dollarChange: ''
+    percentChange: ''
   });
 
   useEffect(() => {
@@ -618,14 +619,14 @@ export default function AdminPage() {
   const handleAddReturn = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const dollarChange = parseFloat(newReturn.dollarChange);
+    const percentChange = parseFloat(newReturn.percentChange);
 
     const res = await fetch('/api/fund-returns', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         date: newReturn.date,
-        dollarChange: dollarChange,
+        percentChange: percentChange,
         totalFundValue: displayedFundValue  // Use the displayed (calculated) fund value
       }),
     });
@@ -633,7 +634,7 @@ export default function AdminPage() {
     if (res.ok) {
       setNewReturn({
         date: new Date().toISOString().split('T')[0],
-        dollarChange: ''
+        percentChange: ''
       });
       await loadFundReturns();
       alert('Return added successfully!');
@@ -1214,13 +1215,13 @@ export default function AdminPage() {
               />
             </div>
             <div className="flex-1">
-              <label className="block text-sm text-gray-600 mb-1">Dollar Change</label>
+              <label className="block text-sm text-gray-600 mb-1">Percent Change (%)</label>
               <input
                 type="number"
                 step="0.01"
-                placeholder="e.g., 1500 or -500"
-                value={newReturn.dollarChange}
-                onChange={(e) => setNewReturn({ ...newReturn, dollarChange: e.target.value })}
+                placeholder="e.g., 5 or -2.5"
+                value={newReturn.percentChange}
+                onChange={(e) => setNewReturn({ ...newReturn, percentChange: e.target.value })}
                 className="w-full px-3 py-2 border rounded-md"
                 required
               />
@@ -1285,8 +1286,8 @@ export default function AdminPage() {
                   const monthDay = dateObj.getDate();
                   const isEditing = editingReturn === day.return?.id;
 
-                  const dailyReturnPct = day.return && day.return.total_fund_value !== 0
-                    ? (day.return.dollar_change / day.return.total_fund_value) * 100
+                  const dailyReturnPct = day.return
+                    ? (day.return.percent_change ?? (day.return.total_fund_value !== 0 ? (day.return.dollar_change / day.return.total_fund_value) * 100 : 0))
                     : null;
 
                   return (
