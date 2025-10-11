@@ -44,6 +44,7 @@ db.exec(`
     date TEXT UNIQUE NOT NULL,
     dollar_change REAL NOT NULL,
     total_fund_value REAL NOT NULL,
+    percent_change REAL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -85,6 +86,13 @@ if (!fundSettings) {
 // Add ownership_percentage column if it doesn't exist (for existing databases)
 try {
   db.exec(`ALTER TABLE users ADD COLUMN ownership_percentage REAL DEFAULT 0`);
+} catch (e) {
+  // Column already exists, ignore error
+}
+
+// Add percent_change column to fund_returns if it doesn't exist (for existing databases)
+try {
+  db.exec(`ALTER TABLE fund_returns ADD COLUMN percent_change REAL`);
 } catch (e) {
   // Column already exists, ignore error
 }
