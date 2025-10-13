@@ -1330,7 +1330,7 @@ export default function AdminPage() {
                         dailyReturnPct >= 0 ? 'text-green-600' : 'text-red-600'
                       }`}>
                         {dailyReturnPct !== null ? (
-                          <>{dailyReturnPct >= 0 ? '+' : ''}{dailyReturnPct.toFixed(1)}%</>
+                          <>{dailyReturnPct >= 0 ? '+' : ''}{dailyReturnPct.toFixed(3)}%</>
                         ) : (
                           '-'
                         )}
@@ -1340,7 +1340,7 @@ export default function AdminPage() {
                         day.cumulativeReturnPct >= 0 ? 'text-green-600' : 'text-red-600'
                       }`}>
                         {day.cumulativeReturnPct !== null ? (
-                          <>{day.cumulativeReturnPct >= 0 ? '+' : ''}{day.cumulativeReturnPct.toFixed(1)}%</>
+                          <>{day.cumulativeReturnPct >= 0 ? '+' : ''}{day.cumulativeReturnPct.toFixed(3)}%</>
                         ) : (
                           '-'
                         )}

@@ -344,7 +344,7 @@ export default function DashboardPage() {
                           day.userDailyReturn >= 0 ? 'text-green-600' : 'text-red-600'
                         }`}>
                           {day.userDailyReturn !== null ? (
-                            <>{day.userDailyReturn >= 0 ? '+' : ''}{day.userDailyReturn.toFixed(1)}%</>
+                            <>{day.userDailyReturn >= 0 ? '+' : ''}{day.userDailyReturn.toFixed(3)}%</>
                           ) : (
                             '-'
                           )}
@@ -354,7 +354,7 @@ export default function DashboardPage() {
                           day.cumulativeReturn >= 0 ? 'text-green-600' : 'text-red-600'
                         }`}>
                           {day.cumulativeReturn !== null ? (
-                            <>{day.cumulativeReturn >= 0 ? '+' : ''}{day.cumulativeReturn.toFixed(1)}%</>
+                            <>{day.cumulativeReturn >= 0 ? '+' : ''}{day.cumulativeReturn.toFixed(3)}%</>
                           ) : (
                             '-'
                           )}
