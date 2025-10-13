@@ -1276,6 +1276,7 @@ export default function AdminPage() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-2 text-left">Date</th>
+                  <th className="px-4 py-2 text-right">Dollar Change ($)</th>
                   <th className="px-4 py-2 text-right">Daily Return (%)</th>
                   <th className="px-4 py-2 text-right">Month's Return (%)</th>
                   <th className="px-4 py-2 text-center">Actions</th>
@@ -1304,6 +1305,16 @@ export default function AdminPage() {
                             </span>
                           )}
                         </div>
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {day.return ? (
+                          <span className={`font-medium ${day.return.dollar_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {day.return.dollar_change >= 0 ? '+' : ''}
+                            ${day.return.dollar_change.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
                       </td>
                       <td className={`px-4 py-2 text-right font-medium ${
                         dailyReturnPct === null ? 'text-gray-400' :
