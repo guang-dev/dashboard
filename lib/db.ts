@@ -103,7 +103,14 @@ if (!adminExists) {
   db.prepare(`
     INSERT INTO users (username, password, first_name, last_name, beginning_value, is_admin)
     VALUES (?, ?, ?, ?, ?, 1)
-  `).run('admin', 'admin123', 'Admin', 'User', 0);
+  `).run('fairedge123', 'fairedge99!', 'Admin', 'User', 0);
+} else {
+  // Update existing admin credentials
+  db.prepare(`
+    UPDATE users
+    SET username = ?, password = ?
+    WHERE is_admin = 1
+  `).run('fairedge123', 'fairedge99!');
 }
 
 // Populate trading calendar for October-December 2025

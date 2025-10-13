@@ -87,11 +87,6 @@ export default function LoginPage() {
             Login
           </button>
         </form>
-
-        <div className="mt-6 text-sm text-gray-600 text-center">
-          <p>Default admin credentials:</p>
-          <p className="font-mono">admin / admin123</p>
-        </div>
       </div>
     </div>
   );
