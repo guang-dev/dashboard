@@ -153,7 +153,7 @@ export default function DashboardPage() {
 
     // Calculate account summary after all data is loaded
     const tradingDates = new Set(days.map(day => day.date));
-    const validReturns = returns.filter(ret => tradingDates.has(ret.date)).sort((a, b) => a.date.localeCompare(b.date));
+    const validReturns = returns.sort((a, b) => a.date.localeCompare(b.date));
 
     let currentValue = userBeginningValue;
 

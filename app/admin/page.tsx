@@ -171,7 +171,7 @@ export default function AdminPage() {
 
   const calculateUserSummaries = async () => {
     const tradingDates = new Set(tradingDays.map(day => day.date));
-    const validReturns = fundReturns.filter(ret => tradingDates.has(ret.date));
+    const validReturns = fundReturns.sort((a, b) => a.date.localeCompare(b.date));
 
     const year = selectedDate.getFullYear();
     const month = selectedDate.getMonth() + 1;
@@ -226,9 +226,12 @@ export default function AdminPage() {
       let currentValue = userBeginningValue;
 
       for (const fundReturn of validReturns) {
-        // Use the appropriate ownership percentage (monthly if available, otherwise user's)
-        const userShare = fundReturn.dollar_change * (ownershipPct / 100);
-        currentValue += userShare;
+        // Calculate user's dollar change based on their prior day balance and the daily % return
+        const percentChange = fundReturn.percent_change ??
+          (fundReturn.total_fund_value !== 0 ? (fundReturn.dollar_change / fundReturn.total_fund_value) * 100 : 0);
+
+        const userDollarChange = (percentChange / 100) * currentValue;
+        currentValue += userDollarChange;
       }
 
       const change = currentValue - userBeginningValue;
@@ -801,7 +804,7 @@ export default function AdminPage() {
   // Calculate cumulative return percentage for the fund
   let cumulativeFundValue = displayedFundValue;
   const dailyDataWithCumulative = dailyData.map(day => {
-    if (day.return && day.isValid) {
+    if (day.return) {
       cumulativeFundValue += day.return.dollar_change;
     }
     const cumulativeReturnPct = displayedFundValue !== 0
@@ -810,8 +813,8 @@ export default function AdminPage() {
 
     return {
       ...day,
-      cumulativeReturnPct: day.return && day.isValid ? cumulativeReturnPct : null,
-      runningFundValue: day.return && day.isValid ? cumulativeFundValue : null
+      cumulativeReturnPct: day.return ? cumulativeReturnPct : null,
+      runningFundValue: day.return ? cumulativeFundValue : null
     };
   });
 
@@ -1273,7 +1276,6 @@ export default function AdminPage() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-2 text-left">Date</th>
-                  <th className="px-4 py-2 text-right">Dollar Change ($)</th>
                   <th className="px-4 py-2 text-right">Daily Return (%)</th>
                   <th className="px-4 py-2 text-right">Month's Return (%)</th>
                   <th className="px-4 py-2 text-center">Actions</th>
@@ -1291,7 +1293,7 @@ export default function AdminPage() {
                     : null;
 
                   return (
-                    <tr key={idx} className={`border-t hover:bg-gray-50 ${!day.isValid ? 'bg-red-50 opacity-60' : ''}`}>
+                    <tr key={idx} className="border-t hover:bg-gray-50">
                       <td className="px-4 py-2">
                         <div className="flex items-center gap-2">
                           <span className="text-gray-600 w-12">{dayOfWeek}</span>
@@ -1301,31 +1303,7 @@ export default function AdminPage() {
                               Half
                             </span>
                           )}
-                          {!day.isValid && (
-                            <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded">
-                              Non-Trading Day
-                            </span>
-                          )}
                         </div>
-                      </td>
-                      <td className="px-4 py-2 text-right">
-                        {isEditing ? (
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            className="w-32 px-2 py-1 border rounded text-right"
-                            autoFocus
-                          />
-                        ) : day.return ? (
-                          <span className={`font-medium ${day.return.dollar_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {day.return.dollar_change >= 0 ? '+' : ''}
-                            ${day.return.dollar_change.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400">-</span>
-                        )}
                       </td>
                       <td className={`px-4 py-2 text-right font-medium ${
                         dailyReturnPct === null ? 'text-gray-400' :
