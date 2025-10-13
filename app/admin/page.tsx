@@ -801,18 +801,27 @@ export default function AdminPage() {
 
   dailyData.sort((a, b) => a.date.localeCompare(b.date));
 
-  // Calculate cumulative return percentage for the fund
+  // Calculate cumulative return percentage for the fund with compounding
   let cumulativeFundValue = displayedFundValue;
   const dailyDataWithCumulative = dailyData.map(day => {
+    let dailyDollarChange = null;
+
     if (day.return) {
-      cumulativeFundValue += day.return.dollar_change;
+      // Calculate dollar change based on prior day's fund value (compounding)
+      const percentChange = day.return.percent_change ??
+        (day.return.total_fund_value !== 0 ? (day.return.dollar_change / day.return.total_fund_value) * 100 : 0);
+
+      dailyDollarChange = (percentChange / 100) * cumulativeFundValue;
+      cumulativeFundValue += dailyDollarChange;
     }
+
     const cumulativeReturnPct = displayedFundValue !== 0
       ? ((cumulativeFundValue - displayedFundValue) / displayedFundValue) * 100
       : 0;
 
     return {
       ...day,
+      dailyDollarChange: dailyDollarChange,
       cumulativeReturnPct: day.return ? cumulativeReturnPct : null,
       runningFundValue: day.return ? cumulativeFundValue : null
     };
@@ -1307,10 +1316,10 @@ export default function AdminPage() {
                         </div>
                       </td>
                       <td className="px-4 py-2 text-right">
-                        {day.return ? (
-                          <span className={`font-medium ${day.return.dollar_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {day.return.dollar_change >= 0 ? '+' : ''}
-                            ${day.return.dollar_change.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {day.dailyDollarChange !== null ? (
+                          <span className={`font-medium ${day.dailyDollarChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {day.dailyDollarChange >= 0 ? '+' : ''}
+                            ${day.dailyDollarChange.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         ) : (
                           <span className="text-gray-400">-</span>
