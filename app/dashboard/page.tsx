@@ -254,7 +254,7 @@ export default function DashboardPage() {
 
         {/* Account Summary */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-          <h2 className="text-2xl font-semibold mb-4 text-gray-800">Account Summary</h2>
+          <h2 className="text-2xl font-semibold mb-4 text-gray-800">Monthly Account Summary</h2>
           <div className="space-y-3">
             <div className="flex justify-between items-center">
               <span className="text-gray-600">Account Name:</span>
