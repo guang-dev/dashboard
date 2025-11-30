@@ -1088,7 +1088,7 @@ export default function AdminPage() {
               <p className={`text-2xl font-bold ${
                 userSummaries.reduce((sum, s) => sum + s.change, 0) >= 0 ? 'text-green-600' : 'text-red-600'
               }`}>
-                {userSummaries.reduce((sum, s) => sum + s.change, 0) >= 0 ? '+' : ''}${userSummaries.reduce((sum, s) => sum + s.change, 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                {userSummaries.reduce((sum, s) => sum + s.change, 0) >= 0 ? '+$' : '-$'}{Math.abs(userSummaries.reduce((sum, s) => sum + s.change, 0)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </p>
               <p className={`text-xs mt-1 ${
                 userSummaries.reduce((sum, s) => sum + s.change, 0) >= 0 ? 'text-green-600' : 'text-red-600'
@@ -1175,7 +1175,7 @@ export default function AdminPage() {
                                 Current: ${summary.currentValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                               </p>
                               <p className={`text-sm ${summary.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                {summary.change >= 0 ? '+' : ''}${summary.change.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                {summary.change >= 0 ? '+$' : '-$'}{Math.abs(summary.change).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                                 ({summary.percentChange >= 0 ? '+' : ''}{summary.percentChange.toFixed(1)}%)
                               </p>
                             </>
@@ -1318,8 +1318,8 @@ export default function AdminPage() {
                       <td className="px-4 py-2 text-right">
                         {day.dailyDollarChange !== null ? (
                           <span className={`font-medium ${day.dailyDollarChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {day.dailyDollarChange >= 0 ? '+' : ''}
-                            ${day.dailyDollarChange.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {day.dailyDollarChange >= 0 ? '+$' : '-$'}
+                            {Math.abs(day.dailyDollarChange).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         ) : (
                           <span className="text-gray-400">-</span>

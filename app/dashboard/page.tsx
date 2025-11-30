@@ -271,7 +271,7 @@ export default function DashboardPage() {
             <div className="flex justify-between items-center">
               <span className="text-gray-600">Change:</span>
               <span className={`font-semibold ${accountSummary.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {accountSummary.change >= 0 ? '+' : ''}${accountSummary.change.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {accountSummary.change >= 0 ? '+$' : '-$'}{Math.abs(accountSummary.change).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
             <div className="flex justify-between items-center">
@@ -334,7 +334,7 @@ export default function DashboardPage() {
                           day.userDollarChange >= 0 ? 'text-green-600' : 'text-red-600'
                         }`}>
                           {day.userDollarChange !== null ? (
-                            <>{day.userDollarChange >= 0 ? '+' : ''}${day.userDollarChange.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
+                            <>{day.userDollarChange >= 0 ? '+$' : '-$'}{Math.abs(day.userDollarChange).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
                           ) : (
                             '-'
                           )}

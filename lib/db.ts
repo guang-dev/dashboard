@@ -127,7 +127,7 @@ if (calendarExists.count === 0) {
     ...Array.from({ length: 5 }, (_, i) => `2025-11-${String(i + 3).padStart(2, '0')}`),
     ...Array.from({ length: 5 }, (_, i) => `2025-11-${String(i + 10).padStart(2, '0')}`),
     ...Array.from({ length: 5 }, (_, i) => `2025-11-${String(i + 17).padStart(2, '0')}`),
-    '2025-11-24', '2025-11-25', '2025-11-26',
+    '2025-11-24', '2025-11-25', '2025-11-26', '2025-11-28',
     // December 2025
     ...Array.from({ length: 5 }, (_, i) => `2025-12-${String(i + 1).padStart(2, '0')}`),
     ...Array.from({ length: 5 }, (_, i) => `2025-12-${String(i + 8).padStart(2, '0')}`),
@@ -142,6 +142,13 @@ if (calendarExists.count === 0) {
   for (const date of tradingDays) {
     insertStmt.run(date, halfDays.includes(date) ? 1 : 0);
   }
+}
+
+// Ensure half days are in the calendar (fixes issue where half days were marked but not added)
+const halfDaysToEnsure = ['2025-11-28', '2025-12-24'];
+const ensureHalfDayStmt = db.prepare('INSERT OR IGNORE INTO trading_calendar (date, is_half_day) VALUES (?, 1)');
+for (const date of halfDaysToEnsure) {
+  ensureHalfDayStmt.run(date);
 }
 
 export default db;
