@@ -33,6 +33,17 @@ interface UserSummary {
   percentChange: number;
   beginningValue: number;
   displayOwnership: number;
+  totalCapitalAdded: number;
+  totalCapitalWithdrawn: number;
+}
+
+interface CapitalTransaction {
+  id: number;
+  user_id: number;
+  date: string;
+  amount: number;
+  type: 'deposit' | 'withdrawal';
+  note: string | null;
 }
 
 export default function AdminPage() {
@@ -54,6 +65,18 @@ export default function AdminPage() {
   const [showMonthValuesModal, setShowMonthValuesModal] = useState(false);
   const [monthValuesData, setMonthValuesData] = useState<Record<number, { beginningValue: string; ownershipPercentage: string }>>({});
   const [selectedMonthYear, setSelectedMonthYear] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
+
+  // Capital transaction state
+  const [showCapitalModal, setShowCapitalModal] = useState(false);
+  const [capitalModalUser, setCapitalModalUser] = useState<User | null>(null);
+  const [capitalTransactions, setCapitalTransactions] = useState<Record<number, CapitalTransaction[]>>({});
+  const [newCapitalTransaction, setNewCapitalTransaction] = useState({
+    date: new Date().toISOString().split('T')[0],
+    amount: '',
+    type: 'deposit' as 'deposit' | 'withdrawal',
+    note: ''
+  });
+
   const [editUserData, setEditUserData] = useState({
     firstName: '',
     lastName: '',
@@ -100,7 +123,25 @@ export default function AdminPage() {
   useEffect(() => {
     loadFundReturns();
     loadTradingCalendar();
+    loadCapitalTransactions();
   }, [selectedDate]);
+
+  const loadCapitalTransactions = async () => {
+    const year = selectedDate.getFullYear();
+    const month = selectedDate.getMonth() + 1;
+
+    const transactionsByUser: Record<number, CapitalTransaction[]> = {};
+
+    for (const user of users) {
+      const res = await fetch(`/api/capital-transactions?userId=${user.id}&year=${year}&month=${month}`);
+      if (res.ok) {
+        const data = await res.json();
+        transactionsByUser[user.id] = data.transactions || [];
+      }
+    }
+
+    setCapitalTransactions(transactionsByUser);
+  };
 
   const loadFundSettings = async () => {
     const res = await fetch('/api/fund-settings');
@@ -116,7 +157,7 @@ export default function AdminPage() {
     if (users.length > 0 && tradingDays.length > 0) {
       calculateUserSummaries();
     }
-  }, [fundReturns, users, tradingDays]);
+  }, [fundReturns, users, tradingDays, capitalTransactions]);
 
   const loadUsers = async () => {
     const res = await fetch('/api/users');
@@ -223,27 +264,66 @@ export default function AdminPage() {
       }
       // Otherwise stays 0 for future months
 
+      // Get capital transactions for this user
+      const userTransactions = capitalTransactions[user.id] || [];
+
       let currentValue = userBeginningValue;
+      let totalCapitalAdded = 0;
+      let totalCapitalWithdrawn = 0;
 
-      for (const fundReturn of validReturns) {
-        // Calculate user's dollar change based on their prior day balance and the daily % return
-        const percentChange = fundReturn.percent_change ??
-          (fundReturn.total_fund_value !== 0 ? (fundReturn.dollar_change / fundReturn.total_fund_value) * 100 : 0);
-
-        const userDollarChange = (percentChange / 100) * currentValue;
-        currentValue += userDollarChange;
+      // Create a map of transactions by date
+      const transactionsByDate = new Map<string, CapitalTransaction[]>();
+      for (const tx of userTransactions) {
+        if (!transactionsByDate.has(tx.date)) {
+          transactionsByDate.set(tx.date, []);
+        }
+        transactionsByDate.get(tx.date)!.push(tx);
       }
 
-      const change = currentValue - userBeginningValue;
-      const percentChange = userBeginningValue !== 0 ? (change / userBeginningValue) * 100 : 0;
+      // Get all unique dates (returns + transactions)
+      const allDates = new Set<string>();
+      validReturns.forEach(r => allDates.add(r.date));
+      userTransactions.forEach(t => allDates.add(t.date));
+      const sortedDates = Array.from(allDates).sort();
+
+      // Process each date chronologically
+      for (const date of sortedDates) {
+        // First, apply any capital transactions for this date (BEFORE returns)
+        const dayTransactions = transactionsByDate.get(date) || [];
+        for (const tx of dayTransactions) {
+          if (tx.type === 'deposit') {
+            currentValue += tx.amount;
+            totalCapitalAdded += tx.amount;
+          } else {
+            currentValue -= tx.amount;
+            totalCapitalWithdrawn += tx.amount;
+          }
+        }
+
+        // Then, apply returns for this date (if any)
+        const dayReturn = validReturns.find(r => r.date === date);
+        if (dayReturn) {
+          const percentChange = dayReturn.percent_change ??
+            (dayReturn.total_fund_value !== 0 ? (dayReturn.dollar_change / dayReturn.total_fund_value) * 100 : 0);
+          const userDollarChange = (percentChange / 100) * currentValue;
+          currentValue += userDollarChange;
+        }
+      }
+
+      // Calculate change excluding capital additions/withdrawals (investment gain only)
+      const effectiveBeginning = userBeginningValue + totalCapitalAdded - totalCapitalWithdrawn;
+      const investmentGain = currentValue - effectiveBeginning;
+      const percentChange = userBeginningValue !== 0 ? (investmentGain / userBeginningValue) * 100 : 0;
 
       return {
         user,
         currentValue,
-        change,
+        change: investmentGain,
         percentChange,
         beginningValue: userBeginningValue,
-        displayOwnership: ownershipPct
+        displayOwnership: ownershipPct,
+        totalCapitalAdded,
+        totalCapitalWithdrawn
       };
     });
 
@@ -724,6 +804,74 @@ export default function AdminPage() {
     setShowMonthValuesModal(true);
   };
 
+  const handleOpenCapitalModal = (user: User) => {
+    setCapitalModalUser(user);
+    setNewCapitalTransaction({
+      date: new Date().toISOString().split('T')[0],
+      amount: '',
+      type: 'deposit',
+      note: ''
+    });
+    setShowCapitalModal(true);
+  };
+
+  const handleAddCapitalTransaction = async () => {
+    if (!capitalModalUser || !newCapitalTransaction.amount) {
+      alert('Please enter an amount');
+      return;
+    }
+
+    const amount = parseFloat(newCapitalTransaction.amount);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Please enter a valid positive amount');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/capital-transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: capitalModalUser.id,
+          date: newCapitalTransaction.date,
+          amount: amount,
+          type: newCapitalTransaction.type,
+          note: newCapitalTransaction.note || null
+        }),
+      });
+
+      if (res.ok) {
+        setShowCapitalModal(false);
+        setCapitalModalUser(null);
+        await loadCapitalTransactions();
+        calculateUserSummaries();
+        alert(`${newCapitalTransaction.type === 'deposit' ? 'Deposit' : 'Withdrawal'} of $${amount.toLocaleString()} added successfully!`);
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to add transaction');
+      }
+    } catch (error) {
+      alert('Failed to add transaction');
+    }
+  };
+
+  const handleDeleteCapitalTransaction = async (transactionId: number) => {
+    if (!confirm('Are you sure you want to delete this transaction?')) return;
+
+    try {
+      const res = await fetch(`/api/capital-transactions?id=${transactionId}`, {
+        method: 'DELETE',
+      });
+
+      if (res.ok) {
+        await loadCapitalTransactions();
+        calculateUserSummaries();
+      }
+    } catch (error) {
+      alert('Failed to delete transaction');
+    }
+  };
+
   const handleSaveMonthValues = async () => {
     try {
       // Calculate total fund from all user beginning values
@@ -980,6 +1128,135 @@ export default function AdminPage() {
           </div>
         )}
 
+        {/* Capital Transaction Modal */}
+        {showCapitalModal && capitalModalUser && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full">
+              <h2 className="text-2xl font-semibold mb-4 text-gray-800">
+                Add Capital Transaction
+              </h2>
+              <p className="text-gray-600 mb-4">
+                For: <strong>{capitalModalUser.first_name} {capitalModalUser.last_name}</strong>
+              </p>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-700 font-semibold mb-1">Transaction Type</label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        name="transactionType"
+                        value="deposit"
+                        checked={newCapitalTransaction.type === 'deposit'}
+                        onChange={() => setNewCapitalTransaction({ ...newCapitalTransaction, type: 'deposit' })}
+                        className="mr-2"
+                      />
+                      <span className="text-green-600 font-medium">Deposit (Add Capital)</span>
+                    </label>
+                    <label className="flex items-center">
+                      <input
+                        type="radio"
+                        name="transactionType"
+                        value="withdrawal"
+                        checked={newCapitalTransaction.type === 'withdrawal'}
+                        onChange={() => setNewCapitalTransaction({ ...newCapitalTransaction, type: 'withdrawal' })}
+                        className="mr-2"
+                      />
+                      <span className="text-red-600 font-medium">Withdrawal</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-700 font-semibold mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={newCapitalTransaction.date}
+                    onChange={(e) => setNewCapitalTransaction({ ...newCapitalTransaction, date: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Returns will only apply to this capital from this date forward
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-700 font-semibold mb-1">Amount ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="e.g., 100000"
+                    value={newCapitalTransaction.amount}
+                    onChange={(e) => setNewCapitalTransaction({ ...newCapitalTransaction, amount: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-700 font-semibold mb-1">Note (optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Additional investment"
+                    value={newCapitalTransaction.note}
+                    onChange={(e) => setNewCapitalTransaction({ ...newCapitalTransaction, note: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md"
+                  />
+                </div>
+              </div>
+
+              {/* Show existing transactions for this user this month */}
+              {capitalTransactions[capitalModalUser.id]?.length > 0 && (
+                <div className="mt-6 pt-4 border-t">
+                  <h3 className="font-semibold text-gray-700 mb-2">Existing Transactions This Month:</h3>
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {capitalTransactions[capitalModalUser.id].map(tx => (
+                      <div key={tx.id} className="flex justify-between items-center bg-gray-50 p-2 rounded">
+                        <div>
+                          <span className={`font-medium ${tx.type === 'deposit' ? 'text-green-600' : 'text-red-600'}`}>
+                            {tx.type === 'deposit' ? '+' : '-'}${tx.amount.toLocaleString()}
+                          </span>
+                          <span className="text-gray-500 text-sm ml-2">{tx.date}</span>
+                          {tx.note && <span className="text-gray-400 text-sm ml-2">({tx.note})</span>}
+                        </div>
+                        <button
+                          onClick={() => handleDeleteCapitalTransaction(tx.id)}
+                          className="text-red-500 hover:text-red-700 text-sm"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-4 mt-6">
+                <button
+                  onClick={handleAddCapitalTransaction}
+                  className={`flex-1 text-white px-4 py-2 rounded-md ${
+                    newCapitalTransaction.type === 'deposit'
+                      ? 'bg-green-600 hover:bg-green-700'
+                      : 'bg-red-600 hover:bg-red-700'
+                  }`}
+                >
+                  Add {newCapitalTransaction.type === 'deposit' ? 'Deposit' : 'Withdrawal'}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCapitalModal(false);
+                    setCapitalModalUser(null);
+                  }}
+                  className="flex-1 bg-gray-400 text-white px-4 py-2 rounded-md hover:bg-gray-500"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* New User Form */}
         {showUserForm && (
           <div className="bg-white rounded-lg shadow-md p-6 mb-8">
@@ -1166,6 +1443,18 @@ export default function AdminPage() {
                           <p className="text-sm text-gray-800">
                             Beginning: ${summary?.beginningValue?.toLocaleString('en-US', { minimumFractionDigits: 2 }) || '0.00'}
                           </p>
+                          {/* Show capital additions/withdrawals if any */}
+                          {summary && (summary.totalCapitalAdded > 0 || summary.totalCapitalWithdrawn > 0) && (
+                            <div className="text-xs bg-blue-50 p-1 rounded">
+                              {summary.totalCapitalAdded > 0 && (
+                                <span className="text-green-600">+${summary.totalCapitalAdded.toLocaleString()} added</span>
+                              )}
+                              {summary.totalCapitalAdded > 0 && summary.totalCapitalWithdrawn > 0 && ' / '}
+                              {summary.totalCapitalWithdrawn > 0 && (
+                                <span className="text-red-600">-${summary.totalCapitalWithdrawn.toLocaleString()} withdrawn</span>
+                              )}
+                            </div>
+                          )}
                           <p className="text-sm text-gray-800">
                             Ownership: {summary?.displayOwnership?.toFixed(1) || user.ownership_percentage}%
                           </p>
@@ -1175,14 +1464,20 @@ export default function AdminPage() {
                                 Current: ${summary.currentValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                               </p>
                               <p className={`text-sm ${summary.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                {summary.change >= 0 ? '+$' : '-$'}{Math.abs(summary.change).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                Gain: {summary.change >= 0 ? '+$' : '-$'}{Math.abs(summary.change).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                                 ({summary.percentChange >= 0 ? '+' : ''}{summary.percentChange.toFixed(1)}%)
                               </p>
                             </>
                           )}
                         </div>
                       </div>
-                      <div className="flex gap-2 mt-3">
+                      <div className="flex gap-2 mt-3 flex-wrap">
+                        <button
+                          onClick={() => handleOpenCapitalModal(user)}
+                          className="text-green-600 hover:text-green-800 text-sm font-medium"
+                        >
+                          + Add Capital
+                        </button>
                         <button
                           onClick={() => {
                             setEditingUser(user.id);

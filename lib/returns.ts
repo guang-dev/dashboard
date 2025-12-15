@@ -118,3 +118,131 @@ export function calculateMonthReturn(dailyReturns: DailyReturn[]): number {
 
   return (cumulativeReturn - 1) * 100;
 }
+
+export interface CapitalTransaction {
+  id: number;
+  user_id: number;
+  date: string;
+  amount: number;
+  type: 'deposit' | 'withdrawal';
+  note: string | null;
+}
+
+export interface FundReturnData {
+  date: string;
+  percent_change: number;
+}
+
+/**
+ * Calculate account value with mid-month capital transactions
+ *
+ * This function properly handles capital additions/withdrawals mid-month by:
+ * 1. Starting with the beginning value
+ * 2. For each day, applying any capital transactions that occurred on that day BEFORE applying returns
+ * 3. Applying the daily return percentage to the current balance
+ *
+ * This ensures new capital only earns returns from the date it was added.
+ */
+export function calculateAccountValueWithTransactions(
+  beginningValue: number,
+  fundReturns: FundReturnData[],
+  capitalTransactions: CapitalTransaction[]
+): {
+  currentValue: number;
+  change: number;
+  percentChange: number;
+  gainFromOriginal: number;
+  gainFromNewCapital: number;
+  totalCapitalAdded: number;
+  totalCapitalWithdrawn: number;
+} {
+  // Sort returns and transactions by date
+  const sortedReturns = [...fundReturns].sort((a, b) => a.date.localeCompare(b.date));
+  const sortedTransactions = [...capitalTransactions].sort((a, b) => a.date.localeCompare(b.date));
+
+  let currentValue = beginningValue;
+  let totalCapitalAdded = 0;
+  let totalCapitalWithdrawn = 0;
+
+  // Track capital basis for gain attribution
+  let capitalBasis = beginningValue;
+
+  // Create a map of transactions by date for quick lookup
+  const transactionsByDate = new Map<string, CapitalTransaction[]>();
+  for (const tx of sortedTransactions) {
+    if (!transactionsByDate.has(tx.date)) {
+      transactionsByDate.set(tx.date, []);
+    }
+    transactionsByDate.get(tx.date)!.push(tx);
+  }
+
+  // Get all unique dates (returns + transactions)
+  const allDates = new Set<string>();
+  sortedReturns.forEach(r => allDates.add(r.date));
+  sortedTransactions.forEach(t => allDates.add(t.date));
+  const sortedDates = Array.from(allDates).sort();
+
+  // Process each date
+  for (const date of sortedDates) {
+    // First, apply any capital transactions for this date (BEFORE returns)
+    const dayTransactions = transactionsByDate.get(date) || [];
+    for (const tx of dayTransactions) {
+      if (tx.type === 'deposit') {
+        currentValue += tx.amount;
+        capitalBasis += tx.amount;
+        totalCapitalAdded += tx.amount;
+      } else {
+        currentValue -= tx.amount;
+        capitalBasis -= tx.amount;
+        totalCapitalWithdrawn += tx.amount;
+      }
+    }
+
+    // Then, apply returns for this date (if any)
+    const dayReturn = sortedReturns.find(r => r.date === date);
+    if (dayReturn && dayReturn.percent_change !== undefined) {
+      const dailyGain = currentValue * (dayReturn.percent_change / 100);
+      currentValue += dailyGain;
+    }
+  }
+
+  // Calculate overall change and percent
+  // The "effective beginning" for percent calculation should account for capital changes
+  const effectiveBeginning = beginningValue + totalCapitalAdded - totalCapitalWithdrawn;
+  const totalChange = currentValue - effectiveBeginning;
+
+  // For percentage change, we use time-weighted calculation
+  // Simple approximation: use the beginning value as the denominator
+  const percentChange = beginningValue !== 0 ? ((currentValue - effectiveBeginning) / beginningValue) * 100 : 0;
+
+  // Calculate gain attribution
+  const gainFromOriginal = currentValue - capitalBasis;
+  const gainFromNewCapital = 0; // This would require more complex tracking
+
+  return {
+    currentValue,
+    change: totalChange,
+    percentChange,
+    gainFromOriginal,
+    gainFromNewCapital,
+    totalCapitalAdded,
+    totalCapitalWithdrawn
+  };
+}
+
+// Get capital transactions for a user for a specific month
+export function getCapitalTransactionsForMonth(
+  userId: number,
+  year: number,
+  month: number
+): CapitalTransaction[] {
+  const monthStr = String(month).padStart(2, '0');
+  const pattern = `${year}-${monthStr}-%`;
+
+  return db.prepare(`
+    SELECT id, user_id, date, amount, type, note
+    FROM capital_transactions
+    WHERE user_id = ? AND date LIKE ?
+    ORDER BY date ASC
+  `).all(userId, pattern) as CapitalTransaction[];
+}

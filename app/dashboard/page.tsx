@@ -26,6 +26,15 @@ interface TradingDay {
   is_half_day: number;
 }
 
+interface CapitalTransaction {
+  id: number;
+  user_id: number;
+  date: string;
+  amount: number;
+  type: 'deposit' | 'withdrawal';
+  note: string | null;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -37,8 +46,11 @@ export default function DashboardPage() {
     percentChange: 0,
     monthReturn: 0,
     beginningValue: 0,
-    ownershipPercentage: 0
+    ownershipPercentage: 0,
+    totalCapitalAdded: 0,
+    totalCapitalWithdrawn: 0
   });
+  const [capitalTransactions, setCapitalTransactions] = useState<CapitalTransaction[]>([]);
   const [totalFundValue, setTotalFundValue] = useState(0);
 
   useEffect(() => {
@@ -93,8 +105,8 @@ export default function DashboardPage() {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth() + 1;
 
-    // Load fund returns, calendar, and monthly beginning value in parallel
-    const [returnsRes, calendarRes, monthlyValueRes] = await Promise.all([
+    // Load fund returns, calendar, monthly beginning value, and capital transactions in parallel
+    const [returnsRes, calendarRes, monthlyValueRes, capitalTxRes] = await Promise.all([
       fetch(`/api/fund-returns?year=${year}&month=${month}&t=${Date.now()}`, {
         cache: 'no-store'
       }),
@@ -103,12 +115,16 @@ export default function DashboardPage() {
       }),
       fetch(`/api/month-values?userId=${user.id}&year=${year}&month=${month}&t=${Date.now()}`, {
         cache: 'no-store'
+      }),
+      fetch(`/api/capital-transactions?userId=${user.id}&year=${year}&month=${month}&t=${Date.now()}`, {
+        cache: 'no-store'
       })
     ]);
 
     let returns: FundReturn[] = [];
     let days: TradingDay[] = [];
     let monthlyValue = null;
+    let userCapitalTx: CapitalTransaction[] = [];
 
     if (returnsRes.ok) {
       const data = await returnsRes.json();
@@ -125,6 +141,12 @@ export default function DashboardPage() {
     if (monthlyValueRes.ok) {
       const data = await monthlyValueRes.json();
       monthlyValue = data.value;
+    }
+
+    if (capitalTxRes.ok) {
+      const data = await capitalTxRes.json();
+      userCapitalTx = data.transactions || [];
+      setCapitalTransactions(userCapitalTx);
     }
 
     // Get fund settings to determine current month
@@ -152,30 +174,65 @@ export default function DashboardPage() {
     // Otherwise stays 0 for past/future months without monthly values
 
     // Calculate account summary after all data is loaded
-    const tradingDates = new Set(days.map(day => day.date));
     const validReturns = returns.sort((a, b) => a.date.localeCompare(b.date));
 
     let currentValue = userBeginningValue;
+    let totalCapitalAdded = 0;
+    let totalCapitalWithdrawn = 0;
 
-    for (const fundReturn of validReturns) {
-      // Calculate user's dollar change based on their prior day balance and the daily % return
-      const percentChange = fundReturn.percent_change ??
-        (fundReturn.total_fund_value !== 0 ? (fundReturn.dollar_change / fundReturn.total_fund_value) * 100 : 0);
-
-      const userDollarChange = (percentChange / 100) * currentValue;
-      currentValue += userDollarChange;
+    // Create a map of transactions by date for quick lookup
+    const transactionsByDate = new Map<string, CapitalTransaction[]>();
+    for (const tx of userCapitalTx) {
+      if (!transactionsByDate.has(tx.date)) {
+        transactionsByDate.set(tx.date, []);
+      }
+      transactionsByDate.get(tx.date)!.push(tx);
     }
 
-    const change = currentValue - userBeginningValue;
-    const percentChange = userBeginningValue !== 0 ? (change / userBeginningValue) * 100 : 0;
+    // Get all unique dates (returns + transactions)
+    const allDates = new Set<string>();
+    validReturns.forEach(r => allDates.add(r.date));
+    userCapitalTx.forEach(t => allDates.add(t.date));
+    const sortedDates = Array.from(allDates).sort();
+
+    // Process each date chronologically
+    for (const date of sortedDates) {
+      // First, apply any capital transactions for this date (BEFORE returns)
+      const dayTransactions = transactionsByDate.get(date) || [];
+      for (const tx of dayTransactions) {
+        if (tx.type === 'deposit') {
+          currentValue += tx.amount;
+          totalCapitalAdded += tx.amount;
+        } else {
+          currentValue -= tx.amount;
+          totalCapitalWithdrawn += tx.amount;
+        }
+      }
+
+      // Then, apply returns for this date (if any)
+      const dayReturn = validReturns.find(r => r.date === date);
+      if (dayReturn) {
+        const percentChange = dayReturn.percent_change ??
+          (dayReturn.total_fund_value !== 0 ? (dayReturn.dollar_change / dayReturn.total_fund_value) * 100 : 0);
+        const userDollarChange = (percentChange / 100) * currentValue;
+        currentValue += userDollarChange;
+      }
+    }
+
+    // Calculate change excluding capital additions/withdrawals (investment gain only)
+    const effectiveBeginning = userBeginningValue + totalCapitalAdded - totalCapitalWithdrawn;
+    const investmentGain = currentValue - effectiveBeginning;
+    const percentChange = userBeginningValue !== 0 ? (investmentGain / userBeginningValue) * 100 : 0;
 
     setAccountSummary({
       currentValue,
-      change,
+      change: investmentGain,
       percentChange,
       monthReturn: percentChange,
       beginningValue: userBeginningValue,
-      ownershipPercentage: userOwnershipPercentage
+      ownershipPercentage: userOwnershipPercentage,
+      totalCapitalAdded,
+      totalCapitalWithdrawn
     });
   };
 
@@ -209,9 +266,36 @@ export default function DashboardPage() {
   // Calculate cumulative return for each day and user's share
   // Use the same beginning value and ownership as Account Summary for consistency
   const userBeginningValue = accountSummary.beginningValue;
-  let cumulativeReturn = 0;
+
+  // Create a map of transactions by date for daily table
+  const transactionsByDateForTable = new Map<string, CapitalTransaction[]>();
+  for (const tx of capitalTransactions) {
+    if (!transactionsByDateForTable.has(tx.date)) {
+      transactionsByDateForTable.set(tx.date, []);
+    }
+    transactionsByDateForTable.get(tx.date)!.push(tx);
+  }
+
   let runningValue = userBeginningValue;
+  let totalCapitalAddedSoFar = 0;
+  let totalCapitalWithdrawnSoFar = 0;
+
   const dailyDataWithCumulative = dailyData.map(day => {
+    // First check for capital transactions on this date
+    const dayTransactions = transactionsByDateForTable.get(day.date) || [];
+    let capitalChangeToday = 0;
+    for (const tx of dayTransactions) {
+      if (tx.type === 'deposit') {
+        runningValue += tx.amount;
+        totalCapitalAddedSoFar += tx.amount;
+        capitalChangeToday += tx.amount;
+      } else {
+        runningValue -= tx.amount;
+        totalCapitalWithdrawnSoFar += tx.amount;
+        capitalChangeToday -= tx.amount;
+      }
+    }
+
     if (day.fundReturn) {
       // Calculate user's dollar change based on prior day's balance and daily % return
       const percentChange = day.fundReturn.percent_change ??
@@ -221,13 +305,32 @@ export default function DashboardPage() {
       runningValue += userDollarChange;
 
       const dayReturn = percentChange; // The daily % return is the same for all investors
-      cumulativeReturn = userBeginningValue !== 0 ? ((runningValue - userBeginningValue) / userBeginningValue) * 100 : 0;
+      // Calculate cumulative return excluding capital changes
+      const effectiveBeginning = userBeginningValue + totalCapitalAddedSoFar - totalCapitalWithdrawnSoFar;
+      const investmentGainSoFar = runningValue - effectiveBeginning;
+      const cumulativeReturn = userBeginningValue !== 0 ? (investmentGainSoFar / userBeginningValue) * 100 : 0;
 
       return {
         ...day,
         userDollarChange: userDollarChange,
         userDailyReturn: dayReturn,
-        cumulativeReturn: cumulativeReturn
+        cumulativeReturn: cumulativeReturn,
+        capitalChange: capitalChangeToday !== 0 ? capitalChangeToday : null
+      };
+    }
+
+    // If there's capital change but no fund return on this day
+    if (capitalChangeToday !== 0) {
+      const effectiveBeginning = userBeginningValue + totalCapitalAddedSoFar - totalCapitalWithdrawnSoFar;
+      const investmentGainSoFar = runningValue - effectiveBeginning;
+      const cumulativeReturn = userBeginningValue !== 0 ? (investmentGainSoFar / userBeginningValue) * 100 : 0;
+
+      return {
+        ...day,
+        userDollarChange: null,
+        userDailyReturn: null,
+        cumulativeReturn: cumulativeReturn,
+        capitalChange: capitalChangeToday
       };
     }
 
@@ -235,7 +338,8 @@ export default function DashboardPage() {
       ...day,
       userDollarChange: null,
       userDailyReturn: null,
-      cumulativeReturn: null
+      cumulativeReturn: null,
+      capitalChange: null
     };
   });
 
@@ -268,8 +372,29 @@ export default function DashboardPage() {
                 ${accountSummary.beginningValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
+            {/* Show capital additions/withdrawals if any */}
+            {(accountSummary.totalCapitalAdded > 0 || accountSummary.totalCapitalWithdrawn > 0) && (
+              <div className="bg-blue-50 rounded p-2 space-y-1">
+                {accountSummary.totalCapitalAdded > 0 && (
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-600">Capital Added:</span>
+                    <span className="font-semibold text-green-600">
+                      +${accountSummary.totalCapitalAdded.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+                {accountSummary.totalCapitalWithdrawn > 0 && (
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-600">Capital Withdrawn:</span>
+                    <span className="font-semibold text-red-600">
+                      -${accountSummary.totalCapitalWithdrawn.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex justify-between items-center">
-              <span className="text-gray-600">Change:</span>
+              <span className="text-gray-600">Investment Gain:</span>
               <span className={`font-semibold ${accountSummary.change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {accountSummary.change >= 0 ? '+$' : '-$'}{Math.abs(accountSummary.change).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
@@ -319,12 +444,22 @@ export default function DashboardPage() {
                     return (
                       <tr key={idx} className="border-t">
                         <td className="px-4 py-2">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-gray-600 w-12">{dayOfWeek}</span>
                             <span className="font-medium">{monthDay}</span>
                             {day.isHalfDay && (
                               <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
                                 Half Day
+                              </span>
+                            )}
+                            {day.capitalChange && day.capitalChange > 0 && (
+                              <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                                +${day.capitalChange.toLocaleString()} added
+                              </span>
+                            )}
+                            {day.capitalChange && day.capitalChange < 0 && (
+                              <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded">
+                                ${Math.abs(day.capitalChange).toLocaleString()} withdrawn
                               </span>
                             )}
                           </div>
