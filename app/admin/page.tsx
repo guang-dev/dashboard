@@ -35,6 +35,7 @@ interface UserSummary {
   displayOwnership: number;
   totalCapitalAdded: number;
   totalCapitalWithdrawn: number;
+  totalCapitalInvested?: number;
 }
 
 interface CapitalTransaction {
@@ -76,6 +77,7 @@ export default function AdminPage() {
     type: 'deposit' as 'deposit' | 'withdrawal',
     note: ''
   });
+  const [editingCapitalTransaction, setEditingCapitalTransaction] = useState<CapitalTransaction | null>(null);
 
   const [editUserData, setEditUserData] = useState({
     firstName: '',
@@ -315,19 +317,34 @@ export default function AdminPage() {
       const investmentGain = currentValue - effectiveBeginning;
       const percentChange = userBeginningValue !== 0 ? (investmentGain / userBeginningValue) * 100 : 0;
 
+      // Calculate total capital invested for this user
+      const totalCapitalInvested = userBeginningValue + totalCapitalAdded - totalCapitalWithdrawn;
+
       return {
         user,
         currentValue,
         change: investmentGain,
         percentChange,
         beginningValue: userBeginningValue,
-        displayOwnership: ownershipPct,
+        displayOwnership: ownershipPct, // Will be recalculated below
         totalCapitalAdded,
-        totalCapitalWithdrawn
+        totalCapitalWithdrawn,
+        totalCapitalInvested
       };
     });
 
-    setUserSummaries(summaries);
+    // Calculate total capital invested across all users (for ownership calculation)
+    const totalFundCapital = summaries.reduce((sum, s) => sum + (s.totalCapitalInvested || 0), 0);
+
+    // Update ownership percentages based on total capital invested
+    const updatedSummaries = summaries.map(s => ({
+      ...s,
+      displayOwnership: totalFundCapital > 0
+        ? ((s.totalCapitalInvested || 0) / totalFundCapital) * 100
+        : s.displayOwnership
+    }));
+
+    setUserSummaries(updatedSummaries);
 
     // Update displayed total fund value
     setDisplayedFundValue(displayTotalFund);
@@ -872,6 +889,61 @@ export default function AdminPage() {
     }
   };
 
+  const handleUpdateCapitalTransaction = async () => {
+    if (!editingCapitalTransaction || !newCapitalTransaction.amount) {
+      alert('Please enter an amount');
+      return;
+    }
+
+    const amount = parseFloat(newCapitalTransaction.amount);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Please enter a valid positive amount');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/capital-transactions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingCapitalTransaction.id,
+          date: newCapitalTransaction.date,
+          amount: amount,
+          type: newCapitalTransaction.type,
+          note: newCapitalTransaction.note || null
+        }),
+      });
+
+      if (res.ok) {
+        setEditingCapitalTransaction(null);
+        setNewCapitalTransaction({
+          date: new Date().toISOString().split('T')[0],
+          amount: '',
+          type: 'deposit',
+          note: ''
+        });
+        await loadCapitalTransactions();
+        calculateUserSummaries();
+        alert('Transaction updated successfully!');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to update transaction');
+      }
+    } catch (error) {
+      alert('Failed to update transaction');
+    }
+  };
+
+  const handleEditCapitalTransaction = (tx: CapitalTransaction) => {
+    setEditingCapitalTransaction(tx);
+    setNewCapitalTransaction({
+      date: tx.date,
+      amount: tx.amount.toString(),
+      type: tx.type,
+      note: tx.note || ''
+    });
+  };
+
   const handleSaveMonthValues = async () => {
     try {
       // Calculate total fund from all user beginning values
@@ -949,13 +1021,32 @@ export default function AdminPage() {
 
   dailyData.sort((a, b) => a.date.localeCompare(b.date));
 
-  // Calculate cumulative return percentage for the fund with compounding
+  // Gather all capital transactions by date for cumulative calculation
+  const allCapitalByDate = new Map<string, number>();
+  Object.values(capitalTransactions).forEach(userTxs => {
+    userTxs.forEach(tx => {
+      const current = allCapitalByDate.get(tx.date) || 0;
+      const amount = tx.type === 'deposit' ? tx.amount : -tx.amount;
+      allCapitalByDate.set(tx.date, current + amount);
+    });
+  });
+
+  // Calculate cumulative return percentage for the fund with compounding (including capital)
   let cumulativeFundValue = displayedFundValue;
+  let totalCapitalAdded = 0;
   const dailyDataWithCumulative = dailyData.map(day => {
     let dailyDollarChange = null;
+    let capitalOnThisDay = 0;
+
+    // First, add any capital transactions for this date (BEFORE returns)
+    if (allCapitalByDate.has(day.date)) {
+      capitalOnThisDay = allCapitalByDate.get(day.date)!;
+      cumulativeFundValue += capitalOnThisDay;
+      totalCapitalAdded += capitalOnThisDay;
+    }
 
     if (day.return) {
-      // Calculate dollar change based on prior day's fund value (compounding)
+      // Calculate dollar change based on current fund value (after capital additions)
       const percentChange = day.return.percent_change ??
         (day.return.total_fund_value !== 0 ? (day.return.dollar_change / day.return.total_fund_value) * 100 : 0);
 
@@ -963,13 +1054,17 @@ export default function AdminPage() {
       cumulativeFundValue += dailyDollarChange;
     }
 
+    // Calculate return based on original fund + capital added up to this point
+    const effectiveBase = displayedFundValue + totalCapitalAdded;
+    const totalGain = cumulativeFundValue - effectiveBase;
     const cumulativeReturnPct = displayedFundValue !== 0
-      ? ((cumulativeFundValue - displayedFundValue) / displayedFundValue) * 100
+      ? (totalGain / displayedFundValue) * 100
       : 0;
 
     return {
       ...day,
       dailyDollarChange: dailyDollarChange,
+      capitalAdded: capitalOnThisDay !== 0 ? capitalOnThisDay : null,
       cumulativeReturnPct: day.return ? cumulativeReturnPct : null,
       runningFundValue: day.return ? cumulativeFundValue : null
     };
@@ -1133,7 +1228,7 @@ export default function AdminPage() {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full">
               <h2 className="text-2xl font-semibold mb-4 text-gray-800">
-                Add Capital Transaction
+                {editingCapitalTransaction ? 'Edit Capital Transaction' : 'Add Capital Transaction'}
               </h2>
               <p className="text-gray-600 mb-4">
                 For: <strong>{capitalModalUser.first_name} {capitalModalUser.last_name}</strong>
@@ -1212,7 +1307,7 @@ export default function AdminPage() {
                   <h3 className="font-semibold text-gray-700 mb-2">Existing Transactions This Month:</h3>
                   <div className="space-y-2 max-h-40 overflow-y-auto">
                     {capitalTransactions[capitalModalUser.id].map(tx => (
-                      <div key={tx.id} className="flex justify-between items-center bg-gray-50 p-2 rounded">
+                      <div key={tx.id} className={`flex justify-between items-center p-2 rounded ${editingCapitalTransaction?.id === tx.id ? 'bg-blue-100 border border-blue-300' : 'bg-gray-50'}`}>
                         <div>
                           <span className={`font-medium ${tx.type === 'deposit' ? 'text-green-600' : 'text-red-600'}`}>
                             {tx.type === 'deposit' ? '+' : '-'}${tx.amount.toLocaleString()}
@@ -1220,12 +1315,20 @@ export default function AdminPage() {
                           <span className="text-gray-500 text-sm ml-2">{tx.date}</span>
                           {tx.note && <span className="text-gray-400 text-sm ml-2">({tx.note})</span>}
                         </div>
-                        <button
-                          onClick={() => handleDeleteCapitalTransaction(tx.id)}
-                          className="text-red-500 hover:text-red-700 text-sm"
-                        >
-                          Delete
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleEditCapitalTransaction(tx)}
+                            className={`text-sm ${editingCapitalTransaction?.id === tx.id ? 'text-blue-700 font-medium' : 'text-blue-500 hover:text-blue-700'}`}
+                          >
+                            {editingCapitalTransaction?.id === tx.id ? 'Editing...' : 'Edit'}
+                          </button>
+                          <button
+                            onClick={() => handleDeleteCapitalTransaction(tx.id)}
+                            className="text-red-500 hover:text-red-700 text-sm"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1234,23 +1337,48 @@ export default function AdminPage() {
 
               <div className="flex gap-4 mt-6">
                 <button
-                  onClick={handleAddCapitalTransaction}
+                  onClick={editingCapitalTransaction ? handleUpdateCapitalTransaction : handleAddCapitalTransaction}
                   className={`flex-1 text-white px-4 py-2 rounded-md ${
                     newCapitalTransaction.type === 'deposit'
                       ? 'bg-green-600 hover:bg-green-700'
                       : 'bg-red-600 hover:bg-red-700'
                   }`}
                 >
-                  Add {newCapitalTransaction.type === 'deposit' ? 'Deposit' : 'Withdrawal'}
+                  {editingCapitalTransaction
+                    ? 'Update Transaction'
+                    : `Add ${newCapitalTransaction.type === 'deposit' ? 'Deposit' : 'Withdrawal'}`}
                 </button>
+                {editingCapitalTransaction && (
+                  <button
+                    onClick={() => {
+                      setEditingCapitalTransaction(null);
+                      setNewCapitalTransaction({
+                        date: new Date().toISOString().split('T')[0],
+                        amount: '',
+                        type: 'deposit',
+                        note: ''
+                      });
+                    }}
+                    className="flex-1 bg-gray-400 text-white px-4 py-2 rounded-md hover:bg-gray-500"
+                  >
+                    Cancel Edit
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     setShowCapitalModal(false);
                     setCapitalModalUser(null);
+                    setEditingCapitalTransaction(null);
+                    setNewCapitalTransaction({
+                      date: new Date().toISOString().split('T')[0],
+                      amount: '',
+                      type: 'deposit',
+                      note: ''
+                    });
                   }}
                   className="flex-1 bg-gray-400 text-white px-4 py-2 rounded-md hover:bg-gray-500"
                 >
-                  Cancel
+                  Close
                 </button>
               </div>
             </div>
@@ -1606,6 +1734,16 @@ export default function AdminPage() {
                           {day.isHalfDay && (
                             <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
                               Half
+                            </span>
+                          )}
+                          {day.capitalAdded && day.capitalAdded > 0 && (
+                            <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                              +${day.capitalAdded.toLocaleString()}
+                            </span>
+                          )}
+                          {day.capitalAdded && day.capitalAdded < 0 && (
+                            <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded">
+                              -${Math.abs(day.capitalAdded).toLocaleString()}
                             </span>
                           )}
                         </div>

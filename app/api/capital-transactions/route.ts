@@ -96,6 +96,66 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// PUT - update a capital transaction
+export async function PUT(request: NextRequest) {
+  try {
+    const { id, date, amount, type, note } = await request.json();
+
+    if (!id) {
+      return NextResponse.json(
+        { error: 'Transaction ID is required' },
+        { status: 400 }
+      );
+    }
+
+    if (type && type !== 'deposit' && type !== 'withdrawal') {
+      return NextResponse.json(
+        { error: 'Type must be "deposit" or "withdrawal"' },
+        { status: 400 }
+      );
+    }
+
+    // Build update query dynamically based on provided fields
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (date !== undefined) {
+      updates.push('date = ?');
+      values.push(date);
+    }
+    if (amount !== undefined) {
+      updates.push('amount = ?');
+      values.push(Math.abs(amount));
+    }
+    if (type !== undefined) {
+      updates.push('type = ?');
+      values.push(type);
+    }
+    if (note !== undefined) {
+      updates.push('note = ?');
+      values.push(note || null);
+    }
+
+    if (updates.length === 0) {
+      return NextResponse.json(
+        { error: 'No fields to update' },
+        { status: 400 }
+      );
+    }
+
+    values.push(id);
+    db.prepare(`UPDATE capital_transactions SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error updating capital transaction:', error);
+    return NextResponse.json(
+      { error: 'Failed to update capital transaction' },
+      { status: 500 }
+    );
+  }
+}
+
 // DELETE - remove a capital transaction
 export async function DELETE(request: NextRequest) {
   try {
